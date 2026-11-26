@@ -1099,8 +1099,12 @@ def analyse(
         for query in names:
             label = f"{hop_label(query)} [{where}]"
             broken = {}
+            ran = {}
             counts = {}
             for side, rs in side_runs.items():
+                # a side whose runs never got to this query (every load failed) did not
+                # complete it: unknown, not 1
+                ran[side] = any(r.finished or query in r.per_query or query in r.errors for r in rs)
                 failures = sum(r.errors.get(query, {}).get("failures", 0) for r in rs)
                 timeouts = sum(r.errors.get(query, {}).get("timeouts", 0) for r in rs)
                 timeout_runs = sum(1 for r in rs if r.errors.get(query, {}).get("timeouts", 0))
@@ -1108,19 +1112,24 @@ def analyse(
                 # An error reply is a correctness failure: at once. Timeouts are timing: they
                 # count once they happen in REPEAT_RUNS separate runs.
                 broken[side] = failures > 0 or timeout_runs >= REPEAT_RUNS
-            cand_ok, base_ok = int(not broken["candidate"]), int(not broken["baseline"])
+            cand_ok, base_ok = (
+                0 if broken[side] else 1 if ran[side] else None
+                for side in ("candidate", "baseline")
+            )
             status = kit.correctness_status(cand_ok, base_ok)
             detail = "; ".join(
                 f"{side}: {f} errors, {t} timeouts in {tr} of {n} runs"
                 for side, (f, t, tr, n) in counts.items()
             )
             sort = 9.0
-            # Timeouts in one candidate run: re-run to see whether they repeat. Also when the
-            # baseline timed out once too: only a repeat decides which side is broken.
+            # Timeouts in one candidate run: re-run to see whether they repeat, whatever the
+            # baseline did (#4065). Until a repeat decides, the row is not a fix either.
             _, t, tr, n = counts["candidate"]
-            if status == "ok" and tr == 1:
+            if cand_ok == 1 and tr == 1:
                 if (dataset, wl_key) not in rerun_done:
                     want_rerun((dataset, wl_key), f"{label}: timeouts in 1 candidate run")
+                    if status == "improvement":
+                        status = "info"
                 else:
                     status, sort = "info", 1.0
                     notes.append(f"{label}: {t} timeouts in 1 of {n} candidate runs, not repeated")
@@ -1355,9 +1364,10 @@ def rank(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def describe(finding: dict[str, Any]) -> str:
     metric, cand, base = finding["metric"], finding["candidate"], finding["baseline"]
     if metric == "completed":
-        return (
-            f"{finding['name']} did not complete on the {'candidate' if cand == 0 else 'baseline'}"
-        )
+        if cand == 0:
+            both = " (baseline too)" if base == 0 else ""
+            return f"{finding['name']} did not complete on the candidate{both}"
+        return f"{finding['name']} did not complete on the baseline"
     unit = " ms" if metric.endswith("_ms") else " q/s" if metric == "throughput" else ""
     r = finding.get("ratio")
     return f"{finding['name']} {metric} {cand}{unit} vs {base}{unit}" + (f" ({r}x)" if r else "")
@@ -1380,20 +1390,10 @@ def summary_of(
     if verdict == "error":
         return " ".join(f"Could not measure: {error}".split())[:500]
     improvements = sum(1 for f in selected if f["status"] == "improvement")
-    both = [
-        f["name"]
-        for f in findings
-        if f["metric"] == "completed" and f["candidate"] == 0 and f["baseline"] == 0
-    ]
     text = (
         f"Pass ({mode_name}): {counts['runs']} runs, {counts['rows']} rows compared; no row regressed past "
         f"{RATIO_THRESHOLD}x after a re-run, every run finished, no new PING freeze"
         + (f"; {improvements} improvements" if improvements else "")
-        + (
-            f"; {len(both)} queries failed on both sides (not new): {', '.join(both[:3])}"
-            if both
-            else ""
-        )
         + "."
     )
     return " ".join(text.split())

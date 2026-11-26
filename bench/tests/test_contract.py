@@ -50,7 +50,10 @@ def test_valid_examples_cover_every_verdict_status_and_correctness_case():
     assert any(f["metric"] == "completed" and f["status"] == "regression" for f in findings)  # did not finish
     assert any(f["metric"] == "invariant" and f["status"] == "regression" for f in findings)  # broke
     assert any(f["metric"] == "rows" and f["status"] == "regression" for f in findings)  # row mismatch
-    assert any(f["candidate"] == 0 and f["baseline"] == 0 and f["status"] == "info" for f in findings)  # both broke
+    # v1.14: broken on both sides is a regression too, and broken names it with baseline_too
+    assert any(f["candidate"] == 0 and f["baseline"] == 0 and f["status"] == "regression" for f in findings)
+    assert any(b["baseline_too"] and not b["introduced"] for r in results for b in r.get("broken", []))
+    assert any(f["metric"] == "invariant" and f["status"] == "improvement" for f in findings)  # fixed
     assert any("schema" not in c for n in nights for c in n["checks"])  # a missing check's stub
 
 
@@ -60,7 +63,8 @@ MICRO_PASS, MICRO_REGRESSION, POKEC_ERROR = examples.MICRO_PASS, examples.MICRO_
 GREEN, RED, SKIPPED = examples.GREEN, examples.RED, examples.SKIPPED
 DID_NOT_FINISH = "result-pokec-did-not-finish.json"  # findings[0]: completed 0 vs 1
 CORRECTNESS = "result-soak-correctness.json"  # [0] invariant 0 vs 1, [1] rows 99412 vs 100000
-BOTH_BROKEN = "result-soak-both-broken.json"  # [0] invariant 0 vs 0, info
+BOTH_BROKEN = "result-soak-both-broken.json"  # [0] invariant 0 vs 0, regression; broken[0]
+FIXED = "result-soak-fixed.json"  # [0] invariant 1 vs 0, improvement; broken []
 DIGEST = "a" * 64
 HANG = {"name": "3-hop read", "metric": "completed", "candidate": 0, "baseline": 1, "ratio": 0.0,
         "threshold": None, "direction": "lower_is_worse", "status": "improvement"}
@@ -94,7 +98,25 @@ CHANGES = [(c.name, c.start, c.path, c.value, [(c.code, c.at)]) for c in example
     ("did-not-finish marked info", DID_NOT_FINISH, ("findings", 0, "status"), "info", [("correctness-not-regression", "$.findings[0].status")]),
     ("broken invariant marked ok", CORRECTNESS, ("findings", 0, "status"), "ok", [("correctness-not-regression", "$.findings[0].status")]),
     ("row mismatch marked ok", CORRECTNESS, ("findings", 1, "status"), "ok", [("correctness-not-regression", "$.findings[1].status")]),
-    ("broken on both sides marked ok", BOTH_BROKEN, ("findings", 0, "status"), "ok", [("both-broken-not-info", "$.findings[0].status")]),
+    ("broken on both sides marked info (the v1.4 rule)", BOTH_BROKEN, ("findings", 0, "status"), "info",
+     [("correctness-not-regression", "$.findings[0].status"), ("broken-mismatch", "$.broken"),
+      ("regression-without-finding", "$.findings")]),
+    ("broken entry missing", BOTH_BROKEN, ("broken",), [], [("broken-mismatch", "$.broken")]),
+    ("broken names a finding that held", FIXED, ("broken",),
+     [{"name": "s03 range index finds every initial chunk", "baseline_too": True, "issue": None, "introduced": False}],
+     [("broken-mismatch", "$.broken")]),
+    ("baseline_too contradicts the finding", BOTH_BROKEN, ("broken", 0, "baseline_too"), False,
+     [("broken-inconsistent", "$.broken[0].baseline_too")]),
+    ("a shared break called introduced", BOTH_BROKEN, ("broken", 0, "introduced"), True,
+     [("broken-inconsistent", "$.broken[0].introduced")]),
+    ("issue as text", BOTH_BROKEN, ("broken", 0, "issue"), "#3512", [("wrong-type", "$.broken[0].issue")]),
+    ("issue 0", BOTH_BROKEN, ("broken", 0, "issue"), 0, [("wrong-type", "$.broken[0].issue")]),
+    ("issue number", BOTH_BROKEN, ("broken", 0, "issue"), 3512, []),
+    ("broken entry without introduced", BOTH_BROKEN, ("broken", 0, "introduced"), DELETE,
+     [("missing-field", "$.broken[0].introduced")]),
+    # an older result (no `broken`) is judged by the rule it was written under: 0 and 0 is info
+    ("broken absent (an older result)", BOTH_BROKEN, ("broken",), DELETE,
+     [("both-broken-not-info", "$.findings[0].status")]),
     ("error carrying regressions", POKEC_ERROR, ("findings",), example(DID_NOT_FINISH)["findings"],
      [("error-with-regression", "$.findings[0].status"), ("error-with-regression", "$.findings[1].status")]),
     ("date as 24/11/2026", GREEN, ("date",), "24/11/2026", [("bad-date", "$.date")]),
@@ -107,6 +129,36 @@ CHANGES = [(c.name, c.start, c.path, c.value, [(c.code, c.at)]) for c in example
     ("incomplete as a line", MICRO_REGRESSION, ("incomplete",), "findings truncated: 50 of 80 kept", []),
     ("incomplete as null", MICRO_REGRESSION, ("incomplete",), None, []),
 ]
+
+
+@pytest.mark.parametrize(
+    "baseline, name, expected",
+    [
+        # reported once, where it is: the broken entry is not also called inconsistent
+        ("1e400", '"s7 MERGE re-run creates no duplicate :Device"',
+         [("non-finite-number", "$.findings[0].baseline")]),
+        ("0", "1e400", [("non-finite-number", "$.findings[0].name"), ("broken-mismatch", "$.broken")]),
+    ],
+)  # fmt: skip
+def test_a_malformed_number_beside_broken_is_reported_not_raised(baseline, name, expected):
+    """An overflowing baseline or a numeric name reaches the `broken` checks' messages."""
+    text = json.dumps(example(BOTH_BROKEN))
+    text = text.replace('"baseline": 0,', f'"baseline": {baseline},', 1)
+    text = text.replace('"name": "s7 MERGE re-run creates no duplicate :Device"', f'"name": {name}', 1)
+    _, problems = contract.validate_text(text)
+    assert [(p.code, p.path) for p in problems] == expected
+
+
+def test_a_night_stored_before_v1_14_stays_valid():
+    """origin/main's soak example before #4065: a pass with 0 and 0 as info and no `broken`.
+    The dashboard re-validates stored nights; they must not turn into errors."""
+    doc = example(BOTH_BROKEN)
+    del doc["broken"]
+    doc.update(verdict="pass", confirmed=False)
+    doc["findings"][0]["status"] = "info"
+    assert contract.validate_result(doc) == []
+    doc["broken"] = []  # the same written today: 0 on the candidate is a regression
+    assert [p.code for p in contract.validate_result(doc)] == ["correctness-not-regression"]
 
 
 @pytest.mark.parametrize("start, path, value, expected", [c[1:] for c in CHANGES], ids=[c[0] for c in CHANGES])

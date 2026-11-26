@@ -589,6 +589,8 @@ jobs:
       candidate_image: ghcr.io/falkordb/falkordb-server:rc-${{ needs.check-files.outputs.ci_key }}-valkey
       baseline_below: ${{ needs.check-files.outputs.perf_below }}
       mode: nightly
+      # the release gate's rule: block only what the candidate introduced (#4065)
+      gate: true
     secrets: inherit
 
   # THE required status check. This is the one name to put in the ruleset; it

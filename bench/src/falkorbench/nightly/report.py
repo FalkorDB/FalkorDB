@@ -33,6 +33,8 @@ ISSUE_URL_CHARACTERS = 2000
 
 TEXT_CHARACTERS = 300
 NAME_CHARACTERS = 80
+# Google Chat takes at most this many characters in one message.
+CHAT_CHARACTERS = 4096
 RUN_URL_CHARACTERS = 300  # a run link is about 70
 WORST_ROWS = 5
 COMMITS_SHOWN = 30
@@ -227,6 +229,40 @@ def regressed_checks(night: dict) -> list[dict]:
     return [check for check in checks_of(night) if check.get("verdict") == "regression"]
 
 
+def broken_of(check: dict) -> list[dict]:
+    """The check's pass/fail checks broken on the candidate (result.json's `broken`, v1.14)."""
+    entries = check.get("broken")
+    if not isinstance(entries, list):
+        return []
+    return [b for b in entries if isinstance(b, dict) and isinstance(b.get("name"), str)]
+
+
+def issue_of(entry: dict) -> int | None:
+    issue = entry.get("issue")
+    return issue if isinstance(issue, int) and not isinstance(issue, bool) and issue > 0 else None
+
+
+def broken_label(entry: dict) -> str:
+    """`s03 range index finds every initial chunk (baseline too: yes, #3512)`."""
+    too = "yes" if entry.get("baseline_too") is True else "no"
+    issue = issue_of(entry)
+    return (
+        f"{one_line(entry.get('name'), 'unnamed', NAME_CHARACTERS)} "
+        f"(baseline too: {too}{f', #{issue}' if issue else ''})"
+    )
+
+
+def fixed_of(check: dict) -> list[str]:
+    """Pass/fail checks the baseline breaks and the candidate holds (0/1 improvements)."""
+    return [
+        one_line(f.get("name"), "unnamed", NAME_CHARACTERS)
+        for f in check.get("findings") or []
+        if isinstance(f, dict)
+        and f.get("status") == "improvement"
+        and f.get("metric") in contract.PASS_FAIL_METRICS
+    ]
+
+
 def issue_url(night: dict, environ: Mapping[str, str]) -> str:
     """A pre-filled new issue for a red night, built only from nightly.json, in plain text.
 
@@ -262,14 +298,24 @@ def issue_url(night: dict, environ: Mapping[str, str]) -> str:
 
 
 def chat_line(night: dict, status: str, reason: str, environ: Mapping[str, str]) -> str:
-    """Perf nightly 2026-11-24: RED (micro-hw, pokec), main@4c10889 vs 6.2.0 · details · dashboard
-    · new issue"""
+    """Perf nightly 2026-11-24: RED (micro-hw; soak-a: s03 x (baseline too: yes, #3512)),
+    main@4c10889 vs 6.2.0 · details · dashboard · new issue
+
+    A red night names every pass/fail check broken on the candidate, whatever the
+    baseline did (#4065), as far as Chat's limit allows; past it, "+N more, see run".
+    "dashboard" (a run the dashboard stores) sits in the tail, inside that limit."""
     date = one_line(night.get("date"), "date unknown", 20)
     checks = checks_of(night)
+    broken: list[str] = []
     if reason:
         detail = reason
     elif status == "red":
         detail = listed([name_of(c) for c in checks if c.get("verdict") == "regression"])
+        broken = [
+            f"{name_of(check)}: {broken_label(entry)}"
+            for check in checks
+            for entry in broken_of(check)
+        ]
     elif status == "error":
         detail = listed([name_of(c) for c in checks if c.get("verdict") == "error"])
     elif status == "skipped":
@@ -277,15 +323,36 @@ def chat_line(night: dict, status: str, reason: str, environ: Mapping[str, str])
     else:
         detail = f"{len(checks)} {'check' if len(checks) == 1 else 'checks'}"
     versus = f"{label(night.get('candidate'))} vs {label(night.get('baseline'))}" if night else ""
-    text = chat_plain(f"Perf nightly {date}: {status.upper()} ({shorten(detail, TEXT_CHARACTERS)})")
-    text += chat_plain(f", {versus}") if versus else ""
+    head = f"Perf nightly {date}: {status.upper()} ({shorten(detail, TEXT_CHARACTERS)}"
+    tail = chat_plain(")" + (f", {versus}" if versus else ""))
     url = run_url_of(night, environ)
-    text += f" · {chat_link(url, 'details')}" if url else ""
+    tail += f" · {chat_link(url, 'details')}" if url else ""
     page = dashboard_url(night, environ)
-    text += f" · {chat_link(page, 'dashboard')}" if page else ""
+    tail += f" · {chat_link(page, 'dashboard')}" if page else ""
     if status == "red" and not reason:
-        text += f" · {chat_link(issue_url(night, environ), 'new issue')}"
-    return text
+        tail += f" · {chat_link(issue_url(night, environ), 'new issue')}"
+    return (
+        chat_plain(head)
+        + broken_list(broken, CHAT_CHARACTERS - len(chat_plain(head)) - len(tail))
+        + tail
+    )
+
+
+def broken_list(entries: list[str], room: int) -> str:
+    """'; broken on the candidate: a; b', as many as fit in `room` characters, then
+    '; +N more, see run'."""
+    if not entries:
+        return ""
+    text, shown = "; broken on the candidate: ", 0
+    for entry in entries:
+        part = chat_plain(entry if not shown else f"; {entry}")
+        more = f"; +{len(entries) - shown - 1} more, see run" if shown + 1 < len(entries) else ""
+        if len(text) + len(part) + len(more) > room:
+            break
+        text, shown = text + part, shown + 1
+    if shown < len(entries):
+        text += f"{'; ' if shown else ''}+{len(entries) - shown} more, see run"
+    return text if len(text) <= room else ""
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +504,35 @@ def summary_markdown(night: dict, status: str, reason: str, environ: Mapping[str
                 f"| {markdown_plain(one_line(text, ''))} |"
             )
         lines.append("")
+    broken = [(check, entry) for check in checks for entry in broken_of(check)]
+    if broken:
+        heading = (
+            "**Pass/fail checks broken on the candidate** (each makes the night red, whatever "
+            "the baseline did; the issue is reporting only):"
+        )
+        lines += [
+            heading,
+            "",
+            "| check | broken check | baseline too | issue |",
+            "| --- | --- | --- | --- |",
+        ]
+        server, repo = server_url(environ), repository(environ)
+        for check, entry in broken:
+            issue = issue_of(entry)
+            lines.append(
+                f"| {markdown_plain(name_of(check))} "
+                f"| {markdown_plain(one_line(entry.get('name'), 'unnamed'))} "
+                f"| {'yes' if entry.get('baseline_too') is True else 'no'} "
+                f"| {markdown_link(f'{server}/{repo}/issues/{issue}', f'#{issue}') if issue else 'none known'} |"
+            )
+        lines.append("")
+    fixed = [(check, name) for check in checks for name in fixed_of(check)]
+    if fixed:
+        lines += [
+            "**Fixed on the candidate** (the baseline breaks it): "
+            + ", ".join(f"{markdown_plain(name_of(c))}: {markdown_plain(n)}" for c, n in fixed),
+            "",
+        ]
     for check in regressed_checks(night):
         lines += regression_lines(check)
     if status == "red":

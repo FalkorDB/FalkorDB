@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "check": "soak-b",
-  "verdict": "pass",
-  "confirmed": false,
-  "summary": "No regression. One invariant is broken on both sides (pre-existing, not from this candidate): s7 MERGE re-run creates no duplicate :Device.",
+  "verdict": "regression",
+  "confirmed": true,
+  "summary": "1 pass/fail check broken on the candidate: s7 MERGE re-run creates no duplicate :Device (baseline too: yes).",
   "candidate": {
     "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
     "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
@@ -31,7 +31,7 @@
       "ratio": null,
       "threshold": null,
       "direction": "lower_is_worse",
-      "status": "info"
+      "status": "regression"
     },
     {
       "name": "s12 IoT ingest",
@@ -45,6 +45,14 @@
     }
   ],
   "error": null,
+  "broken": [
+    {
+      "name": "s7 MERGE re-run creates no duplicate :Device",
+      "baseline_too": true,
+      "issue": null,
+      "introduced": false
+    }
+  ],
   "artifacts": [
     "raw/scenarios.csv",
     "raw/s7-invariants.log"

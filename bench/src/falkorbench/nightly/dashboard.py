@@ -41,11 +41,14 @@ SOAK_RULES = (
     "throughput below 0.7x, a scenario's setup wall time past 1.5x and by more than 5 s; each only "
     "when a re-run of the scenario, order swapped, crosses again. An op is compared once the "
     "baseline has 200 samples; its latency once the candidate has 20 too. At once, no re-run: a "
-    "correctness check broken on the candidate only, a crash, a scenario that did not complete; a "
-    "latency or resource check counts only when every run pair repeats it. Info, not gated: a "
+    "correctness check broken on the candidate, whether or not the baseline breaks it too or an "
+    "issue tracks it, a crash, a scenario that did not complete; a latency or resource check "
+    "broken on the candidate counts only when every run pair repeats it. Info, not gated: a "
     "p99 shift (past 2x and 10 ms, "
-    "with 1,000 baseline samples), a check broken on both sides, and a known flaky check while its "
-    "issue is open: #3095."
+    "with 1,000 baseline samples). Only the release gate leaves out a break the baseline shares, "
+    "and a known flaky check while its issue is open (#3095, #3512) unless the candidate broke it "
+    "every time it was checked (at least 10 times) in every run; a check recorded only when it "
+    "fails cannot show that."
 )
 RULES = {
     "micro-hw": (
@@ -53,14 +56,14 @@ RULES = {
         "writes) and one metric, compared by medians. It regresses when it rises past the "
         "threshold by more than the floor (or past the steep ratio by more than the smaller "
         "floor), both candidate readings sit above both baseline readings, and a re-run repeats "
-        "it; a query that errors on the candidate only is a regression at once. Rust: "
+        "it; a query that errors on the candidate is a regression at once, on both sides too. Rust: "
         "instructions +10% and 250,000; cycles +10% and 20,000,000, or 1.8x and 250,000; branch "
         "misses +25% and 12,000, or 2.8x and 2,000; L2 misses +25% and "
         "225,000, or 3.0x and 15,000; allocated bytes +10% and 65,536, or 8.0x and 4,096. "
         "C (either side): instructions +10% and 1,300,000; cycles +10% and 270,000; branch misses "
         "+25% and 40,000; L2 misses +25% and 665,000, or 3.1x and 15,000; allocated bytes +10% and "
-        "3,100,000, or 8.0x and 4,096. Info, not gated: a crossing the re-run did not repeat, a "
-        "query that errors on both sides, each class's median ratio and sign count."
+        "3,100,000, or 8.0x and 4,096. Info, not gated: a crossing the re-run did not repeat, "
+        "each class's median ratio and sign count."
     ),
     "pokec": (
         "The Pokec dataset, read-only and 5% writes, 3 runs a side. A latency row (p50, p95, p99 "
@@ -68,30 +71,32 @@ RULES = {
         "5 ms, p99 15 ms), in the first pass and again in a re-run of 2 runs a side; under writes "
         "only all queries and a read query's p50 gate. Throughput regresses when it drops past "
         "1.3x in both passes. At once, no re-run: a run that did not finish (it took 3x the other "
-        "side's slowest run, or its server stopped), an error reply; a query that times out in 2 "
+        "side's slowest run, or its server stopped), an error reply, whether or not the baseline "
+        "fails too; a query that times out in 2 "
         "runs, or a PING over 1,000 ms in 2 runs that is past 1.3x the baseline's. Info, not "
-        "gated: a crossing the re-run did not repeat, a failure on both sides, a freeze as long "
+        "gated: a crossing the re-run did not repeat, a freeze as long "
         "on the baseline."
     ),
     "ldbc": (
         "LDBC SNB interactive queries, each image its own server. A query's p50 or p95 latency "
         "regresses past 2x and by more than a floor (p50 0.5 ms, p95 2 ms), confirmed by a "
         "re-run of that query on both sides. At once: different rows returned, or a request the "
-        "candidate failed (error, timeout, server down) that the baseline finished. Info, not "
-        "gated: a crossing the re-run did not repeat, a query that fails on both sides."
+        "candidate failed (error, timeout, server down), whether or not the baseline failed it "
+        "too. Info, not gated: a crossing the re-run did not repeat, a query the baseline cannot "
+        "run at all."
     ),
     "soak-a": SOAK_RULES,
     "soak-b": SOAK_RULES,
     "fuzz": (
         "The control epoch (4 runs: candidate, baseline, baseline, candidate) checks invariants. "
         "A data invariant (writes add up, upsert edges complete) or a crash on the candidate "
-        "only is a regression at once; a timing invariant (no freeze: no PING later than 500 ms "
+        "is a regression at once, whether or not the baseline breaks it too; a timing invariant "
+        "(no freeze: no PING later than 500 ms "
         "while a plain server answered within 100 ms; no timeouts while waiting; writers don't "
-        "starve; quiet graphs stay fast; requests drain; no error replies) counts only when one "
-        "more pair repeats it. Graph build at scale 0.25: a node or edge phase regresses past "
+        "starve; quiet graphs stay fast; requests drain; no error replies) broken on the "
+        "candidate counts only when one more pair repeats it. Graph build at scale 0.25: a node or edge phase regresses past "
         "1.5x and by more than 500 ms, a wiring query past 1.5x and by more than 2 ms, in the "
-        "first runs and again in an extra pair. Info, not gated: an invariant broken on both "
-        "sides, a break that did not repeat."
+        "first runs and again in an extra pair. Info, not gated: a break that did not repeat."
     ),
 }
 
@@ -368,6 +373,23 @@ def regressions(run: Run, check: dict) -> str:
     return table(head, lines) if lines else ""
 
 
+def broken_html(check: dict) -> str:
+    """The check's pass/fail checks broken on the candidate (#4065): baseline too, issue."""
+    repo = f"https://github.com/{report.DEFAULT_REPOSITORY}"
+    lines = []
+    for entry in report.broken_of(check):
+        issue = report.issue_of(entry)
+        lines.append(
+            f"<tr><td>{esc(report.one_line(entry.get('name'), 'unnamed'))}</td>"
+            f"<td>{'yes' if entry.get('baseline_too') is True else 'no'}</td>"
+            f"<td>{link(f'{repo}/issues/{issue}', f'#{issue}') if issue else 'none known'}</td></tr>"
+        )
+    if not lines:
+        return ""
+    head = ["pass/fail check broken on the candidate", "baseline too", "issue"]
+    return table(head, lines)
+
+
 def commits_html(night: dict) -> str:
     commits, why = report.commits_since_green(night)
     previous, candidate = night.get("previous_green_commit"), report.candidate_commit(night)
@@ -422,6 +444,7 @@ def run_page(run: Run, data_href: str, data: Path, unlisted_root: str = "") -> s
         if check.get("error"):
             body.append(f"<p class=error>error: {esc(report.one_line(check.get('error'), ''))}</p>")
         if verdict in FAILING:
+            body.append(broken_html(check))
             body.append(regressions(run, check))
             if rules:
                 body.append(f"<p class=rules>What counts as a regression: {esc(rules)}</p>")

@@ -478,13 +478,15 @@ def test_baseline_that_cannot_run_a_query_leaves_it_out_as_info():
     ]
 
 
-def test_a_query_neither_side_can_run_is_info_on_both():
+def test_a_query_neither_side_can_run_is_left_out_as_info():
+    """A dialect gap on the baseline leaves the query out, compared on neither side: the
+    candidate's failure is not judged (null), so #4065's rule (0 is a regression) does not apply."""
     samples = []
     for p in range(2):
         samples += pair(p, base={"outcome": "error"}, cand={"outcome": "error"})
     v = ck.analyse("IC13", samples)
     assert v.left_out
-    assert [(f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [("info", 0, 0)]
+    assert [(f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [("info", None, 0)]
 
 
 B, C = ck.BASELINE, ck.CANDIDATE
@@ -500,12 +502,12 @@ B, C = ck.BASELINE, ck.CANDIDATE
         ),
         pytest.param(
             [S(B, 0, outcome="timeout"), S(C, 0, outcome="timeout")],
-            ("info", 0, 0),
+            ("regression", 0, 0),
             id="both-time-out-on-the-same-row",
         ),
         pytest.param(
             [*pair(0), S(B, 1, outcome="timeout"), S(C, 1, outcome="timeout")],
-            ("info", 0, 0),
+            ("regression", 0, 0),
             id="both-fail-one-row-another-finished",
         ),
         pytest.param(
@@ -531,13 +533,32 @@ B, C = ck.BASELINE, ck.CANDIDATE
     ],
 )
 def test_completion_is_judged_request_by_request(samples, expected):
-    """A candidate failure on a request the baseline finished is a regression
-    at once; failures on both sides are info; the baseline failing where the
-    candidate finished is an improvement."""
+    """A candidate failure is a regression at once, on both sides too (#4065); the
+    release gate counts it only on a request the baseline finished. The baseline
+    failing where the candidate finished is an improvement."""
     v = ck.analyse("IC2", samples)
     assert not v.left_out
     (f,) = [f for f in v.findings if f["metric"] == "completed"]
     assert (f["status"], f["candidate"], f["baseline"]) == expected
+    if f["status"] == "regression":
+        gate = f.get(kit.INTRODUCED, kit.introduced(f["candidate"], f["baseline"]))
+        assert gate is (expected[2] == 1)
+
+
+def test_a_baseline_failure_on_another_request_is_not_baseline_too():
+    """The candidate fails row 1, which the baseline never ran; the baseline fails row 2."""
+    samples = [*pair(0), S(C, 1, outcome="timeout"), S(B, 2, outcome="timeout"), S(C, 2)]
+    v = ck.analyse("IC2", samples)
+    (f,) = [f for f in v.findings if f["metric"] == "completed"]
+    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
+    assert f[kit.INTRODUCED] is False  # the older rule did not count it either
+
+
+def test_a_candidate_failure_on_a_request_the_baseline_never_ran_is_not_new_for_the_gate():
+    v = ck.analyse("IC2", [*pair(0), S(C, 1, outcome="timeout")])
+    (f,) = [f for f in v.findings if f["metric"] == "completed"]
+    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
+    assert f[kit.INTRODUCED] is False
 
 
 def test_a_row_count_difference_is_a_regression_with_the_totals():
@@ -566,7 +587,7 @@ def test_zero_rows_on_every_run_on_both_sides_is_reported_as_info():
     )
     v = ck.analyse("IC6", samples)
     assert [(f["name"], f["metric"], f["status"]) for f in v.findings] == [
-        ("IC6 returns rows", "invariant", "info")
+        ("IC6 returns rows", "rows", "info")  # a note (0 vs 0 rows), not a broken check
     ]
 
 
@@ -738,9 +759,12 @@ def test_a_side_stops_a_query_after_its_second_timeout(tmp_path):
     sent = [c for c, _ in check.sides[ck.CANDIDATE].calls if "countryXName" in c]
     assert len(sent) == ck.MAX_TIMEOUTS == 2
     result = check.result()
-    assert result["verdict"] == "pass"
+    assert result["verdict"] == "regression"
     assert result["summary"].startswith("1 of 2 LDBC complex reads compared")
-    assert "broken on both sides (not new): IC3" in result["summary"]
+    assert "IC3 did not finish (baseline too)" in result["summary"]
+    assert result["broken"] == [
+        {"name": "IC3 completed", "baseline_too": True, "issue": 4001, "introduced": False}
+    ]
     assert_valid(result)
 
 
@@ -996,7 +1020,10 @@ def test_a_warm_up_alone_is_not_a_comparison(tmp_path):
     check.measure()
     result = check.result()
     assert check.compared_queries == 0
-    assert result["verdict"] == "error" and "no query could be compared" in result["error"]
+    # the candidate's timeouts are a regression (#4065), which outranks the error
+    assert (
+        result["verdict"] == "regression" and "no query could be compared" in result["incomplete"]
+    )
     assert_valid(result)
 
 
@@ -1025,8 +1052,8 @@ def test_a_query_that_finished_on_neither_side_alone_is_not_a_comparison(tmp_pat
     check = scripted_check(tmp_path, hangs, hangs, names=("IC3",), params=5)
     check.measure()
     result = check.result()
-    assert result["verdict"] == "error"
-    assert "no query could be compared" in result["error"]
+    assert result["verdict"] == "regression"  # #4065: the candidate did not finish IC3
+    assert "no query could be compared" in result["incomplete"]
     assert_valid(result)
 
 
@@ -1247,7 +1274,8 @@ def test_a_re_run_with_no_rows_on_either_side_is_inconclusive():
 
 
 def test_a_re_run_that_did_not_retime_a_row_does_not_clear_the_crossing():
-    """Row 2 was the slow one; both sides fail it in the re-run."""
+    """Row 2 was the slow one; both sides fail it in the re-run: the candidate's failure is
+    the finding (#4065), so the crossing is not cleared either."""
     rerun = pair(0, base={"phase": "rerun"}, cand={"phase": "rerun"})
     rerun += pair(1, base={"phase": "rerun"}, cand={"phase": "rerun"})
     rerun += pair(
@@ -1256,7 +1284,38 @@ def test_a_re_run_that_did_not_retime_a_row_does_not_clear_the_crossing():
         cand={"outcome": "timeout", "phase": "rerun"},
     )
     result = ck.confirm("IC2", ["p50_ms"], rerun, {0, 1, 2})
-    assert result.findings == [] and "[2]" in result.inconclusive
+    # the shared failure is the candidate's break (#4065), and the crossing stays unsettled
+    assert [(f["name"], f["status"], f["baseline"]) for f in result.findings] == [
+        ("IC2 completed", "regression", 0)
+    ]
+    assert "[2]" in result.inconclusive
+
+
+def test_a_shared_failure_in_the_re_run_does_not_hide_a_repeated_crossing():
+    """Row 2 fails on both sides in the re-run; rows 0 and 1 are 3x slower again."""
+    rerun = []
+    for p in (0, 1):
+        rerun += pair(p, base={"ms": 10.0, "phase": "rerun"}, cand={"ms": 30.0, "phase": "rerun"})
+    rerun += pair(
+        2,
+        base={"outcome": "timeout", "phase": "rerun"},
+        cand={"outcome": "timeout", "phase": "rerun"},
+    )
+    result = ck.confirm("IC2", ["p50_ms"], rerun, {0, 1})
+    assert [(f["name"], f["status"]) for f in result.findings] == [
+        ("IC2 completed", "regression"),
+        ("IC2 p50", "regression"),
+    ]
+    assert result.findings[0][kit.INTRODUCED] is False and not result.inconclusive
+
+
+def test_a_re_run_the_candidate_alone_fails_is_the_finding():
+    rerun = pair(0, base={"phase": "rerun"}, cand={"phase": "rerun", "ms": 30.0})
+    rerun += pair(1, base={"phase": "rerun"}, cand={"outcome": "timeout", "phase": "rerun"})
+    result = ck.confirm("IC2", ["p50_ms"], rerun, {0, 1})
+    assert [(f["name"], f["status"], f["baseline"]) for f in result.findings] == [
+        ("IC2 completed", "regression", 1)
+    ]
 
 
 def test_an_inconclusive_re_run_is_an_error_in_the_result(tmp_path):

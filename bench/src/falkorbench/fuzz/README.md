@@ -21,7 +21,7 @@ once that file is written.
 | --- | --- | --- |
 | `queue` | the control epoch: 4 runs (candidate, baseline, baseline, candidate), each a fresh server and a 300 s epoch, plus 2 more runs only to confirm a timing break | about 30 min, 45 with a repeat |
 | `nightly` | the control epoch, then graph-build timing: 4 fresh-server builds at scale 0.25 in the same order (2 more to confirm) | about 35 min, 50 with repeats |
-| `long` | both, then seeded random epochs on both sides (one server-hour per side per seed hour, order swapped every hour, 3 epochs of 300 s each; an hour pair starts only if its estimate fits before 3.5 h after the start, and then runs whole on both sides) and the repros; then replays of up to 2 seeds where the candidate broke a check the baseline held | about 3.5–4 h |
+| `long` | both, then seeded random epochs on both sides (one server-hour per side per seed hour, order swapped every hour, 3 epochs of 300 s each; an hour pair starts only if its estimate fits before 3.5 h after the start, and then runs whole on both sides) and the repros; then replays of up to 2 seeds where the candidate broke a timing check | about 3.5–4 h |
 
 `--mode` sets only the length. The checks and the way they are judged are the same in every mode.
 `long` runs on one image flavour per call: to cover the Valkey and the Redis images, the caller
@@ -108,13 +108,12 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
 * **Timing checks** (`no_freeze`, `no_timeouts_while_waiting`, `writers_dont_starve`,
   `quiet_graphs_stay_fast`, `requests_drain`, `no_error_replies`) depend on timing, so a break
   needs a repeat. They are judged on the first four runs. When the candidate broke in either of its
-  two runs and the baseline held in both, one more pair runs (baseline, candidate), and one rule
-  (`verdict.judge_repeat`, the same for long-mode seeds and repros) decides: the candidate breaks
-  again and the baseline holds → regression (0 vs 1); the baseline breaks on the repeat → 0 vs 0,
-  `info`; the candidate holds → 1 vs 1, `info`; the repeat did not run or measure the check → the
-  candidate is null. A break seen only in the extra pair makes a finding `info`, never a
-  regression or an improvement. A timing break against a baseline that was not measured is not
-  judged (both null). A request that waited more than 50 ms in the driver for a free
+  two runs, whatever the baseline did (#4065), one more pair runs (baseline, candidate), and one
+  rule (`verdict.judge_repeat`, the same for long-mode seeds and repros) decides: the candidate
+  breaks again → regression (0 vs the baseline: 0 when the baseline broke in its first runs or
+  on the repeat, else 1); the candidate holds → 1, `info` (it broke once); the repeat did not run
+  or measure the check → the candidate is null. A break seen only in the extra pair makes a
+  finding `info`, never a regression or an improvement. A request that waited more than 50 ms in the driver for a free
   connection is driver-limited and left out of `writers_dont_starve`, `quiet_graphs_stay_fast`
   and `requests_drain`; `quiet_graphs_stay_fast`, which times a read from its schedule, also
   counts the time it waited to be sent. Each count is in `epoch.json`, and a check with every
@@ -122,8 +121,12 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
   `no_timeouts_while_waiting` counts every TIMEOUT reply: the engine's TIMEOUT starts when the
   query reaches it, so time in the driver cannot cause one.
 * **Data checks** (`writes_add_up`, `upsert_edges_complete`) and a crash count at once.
-* Contract v1.4 sets the status: 0 on the candidate only is `regression`, 0 on both sides is `info`
-  ("broken on both sides (not new)"), 0 on the baseline only is `improvement`.
+* Contract v1.14 sets the status: 0 on the candidate is `regression`, whether or not the baseline
+  broke it too and whether or not an issue tracks it; 0 on the baseline only is `improvement`
+  ("fixed"). `result.json`'s `broken` names each pass/fail regression with `baseline_too` and
+  `introduced`: the release gate blocks only on an introduced one, one the baseline did not
+  break too (for a timing check: neither in its first runs nor on the repeat; a baseline that
+  was not measured counts as not breaking it, so the gate blocks, as before).
 * **Graph-build timing**, metric `p50_ms` (the median over a side's first runs, the values that
   decide the row's status; the extra pair's medians are in the summary):
   `build edge phase` and `build node phase` (total wall time of the phase), and
@@ -132,13 +135,14 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
   500 ms (a phase) or 2 ms (a query), in the first four runs and again in an extra pair.
   The wiring query's plan is in each build run's `build.json`.
 * **Long mode** pairs epochs by seed. A timing check (the ones above and `no_unexpected_errors`)
-  counts against the candidate only on a seed where it broke on the candidate, held on the
-  baseline, and did the same again when that seed was replayed on both sides. Up to two seeds are
-  replayed; a candidate-only break whose replay did not measure the check leaves it unmeasured.
+  counts against the candidate only on a seed where it broke on the candidate and broke again when
+  that seed was replayed on both sides, whatever the baseline did. Up to two seeds are replayed; a
+  candidate break whose replay did not measure the check leaves it unmeasured, unless another
+  seed's break repeated.
   A data check (`writes_add_up`, `upsert_edges_complete`, `timed_out_writes_leave_nothing`,
   `constraints_hold`, `index_matches_scan`) or a crash counts at once, in any epoch, replays
   included, and also on a seed (or replay) the baseline never ran or did not measure. A seed
-  where the candidate broke and the baseline held is a regression however the other seeds went. A
+  where the candidate's break repeated is a regression however the other seeds went. A
   repro is a timing check unless the server crashed in it, in its first run or its repeat. A server
   that dies during a server-hour is a crash on the epoch it did not finish.
 
@@ -151,8 +155,9 @@ to 10 `info` rows; every finding, `ok` ones included, is in `raw/rows.csv` (phas
 
 ### Reading a result
 
-* A check that breaks on both sides is reported as `info`: it was there before the candidate, so
-  the candidate did not introduce it. The summary counts these.
+* A check that breaks on both sides is a regression like any other (#4065): a night is green only
+  when every pass/fail check holds on the candidate. The summary marks it "baseline too: yes",
+  and the release gate, which blocks only what the candidate introduced, lets it through.
 * A baseline that freezes holds `no_timeouts_while_waiting`. Its reads wait while the server is
   blocked, before their TIMEOUT starts, so they don't time out. Against such a baseline, a
   candidate that stops freezing but makes reads wait inside their TIMEOUT shows `no_freeze` as an
@@ -172,8 +177,8 @@ The check runs C images (Redis-based) and Rust images (Valkey- or Redis-based) a
 only the module at `/var/lib/falkordb/bin/falkordb.so` (or anywhere in the image) and the server its
 `FALKORDB_SERVER` names (default `redis`): an image without that binary is an error, never a switch
 to the other one. An engine that rejects a long-mode feature (for example
-a constraint command) fails `no_unexpected_errors` on that epoch. That is `info` when both sides
-reject it.
+a constraint command) fails `no_unexpected_errors` on that epoch. When both sides reject it, that
+is a regression with the baseline too, which the release gate does not block on.
 
 ## Development
 
