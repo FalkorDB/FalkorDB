@@ -38,6 +38,7 @@ from falkorbench.nightly import missed_run
 from falkorbench.nightly import pr_comment
 from falkorbench.nightly import report as nightly_report
 from falkorbench.nightly import store as nightly_store
+from falkorbench.nightly import unlisted as nightly_unlisted
 from falkorbench.soak import check as soak_check
 
 # bench/ is the project root; the repo is its parent.
@@ -707,6 +708,21 @@ def nightly_store_command(args):
 def nightly_failures_command(args):
     """One stored run's regressions, broken correctness checks and errors, vs earlier nights."""
     raise SystemExit(nightly_failures.main(list(args)))
+
+
+@nightly.command("trim")
+@click.option("--from", "src", required=True, type=click.Path(path_type=Path), help="stored runs")
+@click.option("--to", "dest", required=True, type=click.Path(path_type=Path), help="the copy")
+def nightly_trim_command(src, dest):
+    """Copy stored runs with only what their pages need (what a deploy publishes)."""
+    click.echo(f"{nightly_store.trim(src, dest)} run(s) -> {dest}")
+
+
+@nightly.command("unlisted", context_settings=PASS_THROUGH)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def nightly_unlisted_command(args):
+    """Unlisted pages of the last 30 days' manual and /perf runs; `url` prints one's address."""
+    raise SystemExit(nightly_unlisted.main(list(args)))
 
 
 @nightly.command("pr-comment", context_settings=PASS_THROUGH)

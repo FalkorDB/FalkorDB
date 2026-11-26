@@ -69,7 +69,8 @@ rm -rf "$W" && mkdir -p "$W/data"
 ```
 
 First the previous scheduled nights, then the run itself (it replaces any copy of itself).
-Once the gh-pages branch exists it holds every stored night:
+Once the gh-pages branch exists it holds every stored night (each with only what its page needs:
+enough to compare failures, not the raw logs):
 
 ```bash
 if git ls-remote --exit-code --heads "https://github.com/$REPO.git" gh-pages >/dev/null; then
@@ -84,7 +85,7 @@ else
   stored=0
   for id in $(gh api "repos/$REPO/actions/workflows/perf-nightly.yml/runs?event=schedule&branch=main&status=completed&per_page=100" \
       --jq ".workflow_runs[] | select(.created_at < \"$before\") | .id"); do
-    uv run --project bench --frozen bench nightly store \
+    uv run --project bench --frozen bench nightly store --full \
       --run-id "$id" --data "$W/data" --trigger nightly --scope main || continue
     stored=$((stored + 1)); [ "$stored" -ge 3 ] && break
   done
@@ -93,10 +94,12 @@ fi
 
 Then the run (`TRIGGER` and `SCOPE` from the table). `bench nightly store` downloads the run's
 `perf-nightly` artifact (its nightly.json) and every `perf-result-<check>` artifact itself (100 MB
-is not unusual), each under a timeout and tried again when it stalls:
+is not unusual), each under a timeout and tried again when it stalls. `--full` keeps every file
+the checks list (the raw files step 3 reads); without it, a store keeps only what the run's page
+needs, as the dashboard does:
 
 ```bash
-FOLDER=$(uv run --project bench --frozen bench nightly store \
+FOLDER=$(uv run --project bench --frozen bench nightly store --full \
   --run-id "$RUN" --data "$W/data" --trigger "$TRIGGER" --scope "$SCOPE") \
   || FOLDER=$(find "$W/data" -maxdepth 1 -name "*-$RUN" -exec basename {} \; | head -1)
 [ -n "$FOLDER" ] || { echo "run $RUN could not be stored: read the error above"; exit 1; }

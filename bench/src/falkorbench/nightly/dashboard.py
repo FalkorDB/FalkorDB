@@ -250,10 +250,11 @@ def table(head: list[str], rows: list[str]) -> str:
     return f"<div class=wide><table><tr>{cells}</tr>{''.join(rows)}</table></div>"
 
 
-def page(title: str, body: str, root: str = "") -> str:
+def page(title: str, body: str, root: str = "", noindex: bool = False) -> str:
+    robots = '<meta name="robots" content="noindex">' if noindex else ""
     return (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
-        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<meta name=viewport content='width=device-width,initial-scale=1'>{robots}"
         f"<title>{esc(title)}</title><style>{STYLE}</style></head><body><header>"
         f"<strong>FalkorDB perf</strong><a href='{root}index.html'>Runs</a>"
         f"<a href='{root}trends.html'>Trends</a></header>{body}</body></html>\n"
@@ -324,7 +325,7 @@ def as_list(value) -> list:
     return value if isinstance(value, list) else []
 
 
-def files_of(run: Run, check: dict, data_href: str, data: Path) -> str:
+def files_of(run: Run, check: dict, data_href: str, data: Path, up: str = "../") -> str:
     """Links to the check's own files as stored: result.json, the runner's record, its artifacts."""
     name = check.get("check")
     if not (isinstance(name, str) and CHECK_RE.fullmatch(name)):
@@ -339,7 +340,7 @@ def files_of(run: Run, check: dict, data_href: str, data: Path) -> str:
     ]
     if not found:
         return "<p class=muted>No files of this check are stored.</p>"
-    href = f"../{data_href}/{run.folder}/{name}/"
+    href = f"{up}{data_href}/{run.folder}/{name}/"
     shown = [link(href + urllib.parse.quote(p), p) for p in found]
     rest = f" <details><summary>{len(shown) - 4} more</summary>{' '.join(shown[4:])}</details>"
     return "<p>Files: " + " ".join(shown[:4]) + (rest if len(shown) > 4 else "") + "</p>"
@@ -384,12 +385,16 @@ def commits_html(night: dict) -> str:
     return f"<p>Commits since the last green night ({len(commits)}):{compare}</p><ul>{items}</ul>"
 
 
-def run_page(run: Run, data_href: str, data: Path) -> str:
+def run_page(run: Run, data_href: str, data: Path, unlisted_root: str = "") -> str:
+    """One run's page, at run/<folder>.html; or, given `unlisted_root` (the path back to the
+    site's root), an unlisted page that is its own folder's index.html: noindex, and no link back
+    to the runs list (which does not list it either)."""
+    up = "" if unlisted_root else "../"
     night = run.night
     url = report.run_url_of(night, {})
     links = [link(url, "GitHub run")] if url else []
     if (data / run.folder / "nightly.json").is_file():
-        links.append(link(f"../{data_href}/{run.folder}/nightly.json", "nightly.json"))
+        links.append(link(f"{up}{data_href}/{run.folder}/nightly.json", "nightly.json"))
     notes = []
     if run.problems:
         notes.append(
@@ -420,18 +425,20 @@ def run_page(run: Run, data_href: str, data: Path) -> str:
             body.append(regressions(run, check))
             if rules:
                 body.append(f"<p class=rules>What counts as a regression: {esc(rules)}</p>")
-        body.append(files_of(run, check, data_href, data))
+        body.append(files_of(run, check, data_href, data, up))
         cards.append(f"<section class=card>{''.join(body)}</section>")
     title = f"{run.folder[:10]} · {run.folder[11:]}"
+    back = "" if unlisted_root else "<p><a href='../index.html'>← Runs</a></p>"
     return page(
         f"Perf run {title}",
         (
-            f"<p><a href='../index.html'>← Runs</a></p><h1><span class={state(run.status)}>"
+            f"{back}<h1><span class={state(run.status)}>"
             f"{esc(run.status.upper())}</span> {esc(run.scope)} · {esc(run.trigger)} · {title}</h1>"
             f"<table>{side(night, 'candidate')}{side(night, 'baseline')}</table>"
             f"<p>{' · '.join(links)}</p>{''.join(notes)}{''.join(cards) or '<p>No checks ran.</p>'}"
         ),
-        root="../",
+        root=unlisted_root or "../",
+        noindex=bool(unlisted_root),
     )
 
 
@@ -555,3 +562,15 @@ def build(data: Path, out: Path) -> int:
             run_page(run, data_href, data), encoding="utf-8"
         )
     return len(runs)
+
+
+def build_unlisted(data: Path, folder: str, out: Path, root: str) -> Path:
+    """One run's unlisted page, <out>/index.html, over the run stored at <data>/<folder>/; `root`
+    is the path from <out> back to the site's root. Returns the page."""
+    [run] = [r for r in load(data) if r.folder == folder]
+    data_href = Path(os.path.relpath(data.resolve(), out.resolve())).as_posix()
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "index.html").write_text(
+        run_page(run, data_href, data, unlisted_root=root), encoding="utf-8"
+    )
+    return out / "index.html"

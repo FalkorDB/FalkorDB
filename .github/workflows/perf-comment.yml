@@ -18,14 +18,16 @@
 #            that runs gets a reaction.
 #   measure  perf-nightly.yml, called: the nightly's resolve -> checks -> merge path,
 #            with these images and checks. A call posts nothing to Chat, reads no earlier
-#            nights, and is no night: perf-dashboard.yml, the skip rule and the previous
-#            green commit read only runs of perf-nightly.yml itself (the "Perf nightly"
-#            workflow), and this run is not one.
+#            nights, and is no night: the skip rule and the previous green commit read only
+#            runs of perf-nightly.yml itself, and perf-dashboard.yml gives this run an
+#            unlisted page, never a place on the runs page.
 #   answer   The run's perf-nightly artifact, laid out with `bench nightly store` as the
 #            dashboard stores a night (run.json: trigger pr-comment, scope pr-<N>), built
 #            with `bench nightly dashboard` into a site uploaded as this run's
 #            perf-dashboard artifact, and one comment: each check's verdict, both images
-#            and commits, the run and the dashboard. A run that left no nightly.json is
+#            and commits, the run, and the run's unlisted page (pr/<N>/<date>-<run id>/ on
+#            the dashboard's site, which perf-dashboard.yml publishes when this run ends and
+#            keeps 30 days; the artifact is the fallback). A run that left no nightly.json is
 #            answered as such, never as green.
 #
 # issue_comment runs this file from the default branch, so a request measures the pull
@@ -181,15 +183,25 @@ jobs:
           retention-days: 90
 
       # Whatever the dashboard did: the answer goes out without its link then.
+      # The page perf-dashboard.yml publishes once this run ends, at a known address.
       - name: Answer on the pull request
         if: ${{ !cancelled() }}
         env:
           REQUEST: ${{ needs.resolve.outputs.request }}
           DASHBOARD_URL: ${{ steps.upload.outputs.artifact-url }}
           MEASURED: ${{ needs.measure.result }}
+          PERF_PAGES_URL: ${{ vars.PERF_PAGES_URL }}
         run: |
           set -euo pipefail
           night=$RUNNER_TEMP/nightly/nightly.json
-          [[ -f $night ]] || night=""
+          page=""
+          if [[ -f $night ]]; then
+            # No address (a night with no usable date): the answer goes out without it.
+            page=$(uv run --project bench --frozen bench nightly unlisted url --kind pr \
+              --nightly "$night" --run-id "$GITHUB_RUN_ID" --pr "$PR") || page=""
+          else
+            night=""
+          fi
           uv run --project bench --frozen bench nightly pr-comment answer --nightly "$night" \
-            --request "$REQUEST" --pr "$PR" --dashboard-url "$DASHBOARD_URL" --measured "$MEASURED"
+            --request "$REQUEST" --pr "$PR" --dashboard-url "$DASHBOARD_URL" --page-url "$page" \
+            --measured "$MEASURED"

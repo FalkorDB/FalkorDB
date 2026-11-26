@@ -549,7 +549,7 @@ def test_the_answer_has_every_verdict_both_images_and_commits_and_both_links(tmp
         assert f"| {check['check']} | {check['verdict']}" in text
     assert "| micro | regression (confirmed) |" in text
     assert "worst regression rows" in text
-    assert f"[run]({RUN})" in text and f"[dashboard]({SITE})" in text
+    assert f"[run]({RUN})" in text and f"[the page's files]({SITE})" in text
     assert "resolved by the run" not in text
 
 
@@ -671,3 +671,19 @@ def test_every_request_that_runs_is_answered():
     }
     # The measure job's jobs show as "measure / <job>": what busy_with looks for.
     assert "measure" in jobs and pc.MEASURE_JOB.match("measure / resolve")
+
+
+def test_the_answer_links_the_runs_page_with_the_artifact_as_fallback(tmp_path):
+    page = "https://falkordb.github.io/FalkorDB/pr/3967/2026-11-24-5000/"
+    text = pc.answer(
+        write(tmp_path, examples.example("nightly-red.json")),
+        "/perf all baseline main",
+        run=RUN,
+        dashboard=SITE,
+        page=page,
+    )
+    assert f"[page]({page}) (appears within minutes of the run's end; kept 30 days)" in text
+    assert (
+        f"[the page's files]({SITE}) (download, open `index.html`, if the page is not up)" in text
+    )
+    assert text.index(page) < text.index(SITE)

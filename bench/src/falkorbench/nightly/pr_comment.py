@@ -524,6 +524,7 @@ def answer(
     *,
     run: str,
     dashboard: str = "",
+    page: str = "",
     measured: str = "",
     server: str = report.DEFAULT_SERVER_URL,
     repo: str = report.DEFAULT_REPOSITORY,
@@ -535,9 +536,15 @@ def answer(
         else "`/perf`"
     )
     links = [report.markdown_link(run, "run")]
+    if page:
+        links.append(
+            report.markdown_link(page, "page")
+            + " (appears within minutes of the run's end; kept 30 days)"
+        )
     if dashboard:
         links.append(
-            report.markdown_link(dashboard, "dashboard") + " (download, open `index.html`)"
+            report.markdown_link(dashboard, "the page's files")
+            + " (download, open `index.html`, if the page is not up)"
         )
     if night_path is None or not night_path.is_file():
         return "\n".join(
@@ -690,6 +697,7 @@ def cmd_answer(
         args.request,
         run=run_link,
         dashboard=args.dashboard_url,
+        page=args.page_url,
         measured=args.measured,
         server=report.server_url(environ),
         repo=repo,
@@ -723,6 +731,7 @@ def main(
     p.add_argument("--request", required=True, help="the request, as resolve normalised it")
     p.add_argument("--pr", required=True, type=int)
     p.add_argument("--dashboard-url", default="")
+    p.add_argument("--page-url", default="", help="the run's unlisted page")
     p.add_argument("--measured", default="", help="the measure job's result")
     p.add_argument("--dry-run", action="store_true", help="write the answer to the job summary")
     p.set_defaults(func=cmd_answer)

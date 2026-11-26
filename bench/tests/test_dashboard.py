@@ -15,6 +15,8 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from datetime import UTC
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,7 @@ from falkorbench.ldbc import check as ldbc
 from falkorbench.nightly import dashboard
 from falkorbench.nightly import failures as nightly_failures
 from falkorbench.nightly import store as nightly_store
+from falkorbench.nightly import unlisted as nightly_unlisted
 from falkorbench.pokec import check as pokec
 from falkorbench.soak import check as soak
 from fixtures import examples
@@ -463,32 +466,57 @@ def test_perf_nightly_asks_for_no_write_beyond_what_its_callers_grant():
             assert LEVELS[level] <= ceiling.get(scope, 0), (name, scope, level)
 
 
-def test_the_dashboard_is_published_by_its_own_workflow_after_the_night():
+def test_the_dashboard_is_published_by_its_own_workflow_after_each_perf_run():
     nightly = load_workflow("perf-nightly.yml")
     assert "publish" not in nightly["jobs"]
+    comment = load_workflow("perf-comment.yml")
     flow = load_workflow("perf-dashboard.yml")
-    assert flow["on"] == {"workflow_run": {"workflows": [nightly["name"]], "types": ["completed"]}}
-    assert flow["concurrency"] == {"group": "perf-dashboard", "cancel-in-progress": False}
-    job = flow["jobs"]["publish"]
-    assert job["permissions"] == {
-        "contents": "write",
+    assert flow["on"] == {
+        "workflow_run": {"workflows": [nightly["name"], comment["name"]], "types": ["completed"]}
+    }
+    jobs = flow["jobs"]
+    assert jobs["decide"]["permissions"] == {"actions": "read"}
+    assert jobs["store"]["permissions"] == {"contents": "write", "actions": "read"}
+    assert jobs["deploy"]["permissions"] == {
+        "contents": "read",
         "actions": "read",
         "pages": "write",
         "id-token": "write",
     }
-    assert job["environment"]["name"] == "github-pages"
-    for step in job["steps"]:
-        if "uses" in step:  # pinned by SHA, like the repo's other workflows
-            assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
-    uses = [step["uses"].split("@")[0] for step in job["steps"] if "uses" in step]
-    assert "actions/upload-pages-artifact" in uses
-    assert "actions/deploy-pages" in uses
+    # A /perf run can never displace a waiting night's store: they queue apart.
+    assert jobs["store"]["concurrency"] == {
+        "group": "perf-dashboard-store",
+        "cancel-in-progress": False,
+    }
+    assert jobs["deploy"]["concurrency"] == {
+        "group": "perf-dashboard-deploy",
+        "cancel-in-progress": False,
+    }
+    assert jobs["deploy"]["environment"]["name"] == "github-pages"
+    assert jobs["deploy"]["needs"] == ["decide", "store"]
+    for job in jobs.values():
+        for step in job["steps"]:
+            if "uses" in step:  # pinned by SHA, like the repo's other workflows
+                assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
+    uses = [step["uses"].split("@")[0] for step in jobs["deploy"]["steps"] if "uses" in step]
+    assert "actions/upload-pages-artifact" in uses and "actions/deploy-pages" in uses
+    build = publish_step("Build the site")
+    # Every deploy rebuilds the unlisted pages: a deploy replaces the whole site.
+    assert "bench nightly dashboard" in build and "bench nightly unlisted --out" in build
+    assert "--days 30" in build
 
 
 def test_the_run_is_stored_only_for_runs_that_report_to_chat():
-    """A scheduled night, or a dispatch that named no image: the nightly records which."""
-    job = load_workflow("perf-dashboard.yml")["jobs"]["publish"]
+    """A scheduled night, or a dispatch that named no image: the nightly records which. A
+    /perf run is never stored: only a comment titled as a request goes on at all."""
+    job = load_workflow("perf-dashboard.yml")["jobs"]["decide"]
     assert "'schedule'" in job["if"] and "'workflow_dispatch'" in job["if"]
+    assert "startsWith(github.event.workflow_run.display_title, '/perf on #')" in job["if"]
+    # By workflow file: a run's `name` is its run-name ("/perf on #N"), not the workflow's.
+    assert "workflow_run.name" not in job["if"]
+    for path in (".github/workflows/perf-nightly.yml", ".github/workflows/perf-comment.yml"):
+        assert f"github.event.workflow_run.path == '{path}'" in job["if"]
+        assert (BENCH.parent / path).is_file()
     text = "\n".join(step.get("run", "") for step in job["steps"])
     assert "dispatch.json" in text and "image_overrides" in text
     record = next(
@@ -497,13 +525,16 @@ def test_the_run_is_stored_only_for_runs_that_report_to_chat():
         if step.get("name") == "Record the image overrides"
     )
     assert "dispatch.json" in record and "image_overrides" in record
+    run_name = load_workflow("perf-comment.yml")["run-name"]
+    assert "format('/perf on #{0}', github.event.issue.number)" in run_name
 
 
 # --- the publish steps, run for real against a fake gh --------------------------------
 
 FAKE_GH = r"""#!/usr/bin/env bash
 # `gh run download` lays out the plan and nightly artifacts from $FAKE_RUN; `gh api` lists
-# $FAKE_ARTIFACTS by name and serves a zip whose result.json names the artifact's id.
+# $FAKE_ARTIFACTS by name (through --jq when given) and serves $FAKE_ZIPS/<id>.zip, else a zip
+# whose result.json names the artifact's id.
 set -euo pipefail
 if [[ $1 == run ]]; then
   dir=
@@ -514,12 +545,15 @@ fi
 url=$2
 if [[ $url == */zip ]]; then
   id=$(basename "$(dirname "$url")")
+  if [[ -f ${FAKE_ZIPS:-/nonexistent}/$id.zip ]]; then cat "$FAKE_ZIPS/$id.zip"; exit 0; fi
   work=$(mktemp -d); echo "$id" > "$work/result.json"
   (cd "$work" && zip -q -r - result.json)
   exit 0
 fi
+jqexpr=.
+while [[ $# -gt 0 ]]; do [[ $1 == --jq ]] && jqexpr=$2; shift; done
 name=${url#*name=}; name=${name%%&*}
-jq --arg n "$name" ".artifacts |= map(select(.name == \$n))" "$FAKE_ARTIFACTS"
+jq --arg n "$name" ".artifacts |= map(select(.name == \$n))" "$FAKE_ARTIFACTS" | jq -r "$jqexpr"
 """
 
 # `uv run --project bench --frozen bench <args>`: bench's own CLI in this interpreter, so the
@@ -539,12 +573,14 @@ def fake_artifacts(tmp_path, entries):
 
 
 def publish_step(name):
-    steps = load_workflow("perf-dashboard.yml")["jobs"]["publish"]["steps"]
-    return next(step["run"] for step in steps if step.get("name") == name)
+    jobs = load_workflow("perf-dashboard.yml")["jobs"].values()
+    return next(step["run"] for job in jobs for step in job["steps"] if step.get("name") == name)
 
 
-def run_download(tmp_path, event, dispatch):
-    """Run the download step; return whether it stores the run."""
+def run_download(
+    tmp_path, event, dispatch, workflow=".github/workflows/perf-nightly.yml", artifacts=()
+):
+    """Run the decide step; return (stored?, published?)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "gh").write_text(FAKE_GH)
@@ -567,6 +603,8 @@ def run_download(tmp_path, event, dispatch):
         "GITHUB_OUTPUT": str(out),
         "RUNNER_TEMP": str(temp),
         "FAKE_RUN": str(fake_run),
+        "WORKFLOW": workflow,
+        "FAKE_ARTIFACTS": str(fake_artifacts(tmp_path, list(artifacts))),
     }
     subprocess.run(
         ["bash", "-c", publish_step("Download the night's artifacts")],
@@ -574,24 +612,38 @@ def run_download(tmp_path, event, dispatch):
         check=True,
         capture_output=True,
     )
-    return "store=true" in out.read_text()
+    said = out.read_text()
+    return "store=true" in said, "publish=true" in said
 
 
 @pytest.mark.parametrize(
-    ("event", "dispatch", "stored"),
+    ("event", "dispatch", "stored", "published"),
     [
-        ("schedule", None, True),
-        ("workflow_dispatch", '{"image_overrides": false}', True),
-        ("workflow_dispatch", '{"image_overrides": true}', False),
-        ("workflow_dispatch", None, False),
-        ("workflow_dispatch", "not json", False),
-        ("workflow_dispatch", "{}", False),
+        ("schedule", None, True, True),
+        ("workflow_dispatch", '{"image_overrides": false}', True, True),
+        # Named its images: never stored, an unlisted page.
+        ("workflow_dispatch", '{"image_overrides": true}', False, True),
+        ("workflow_dispatch", None, False, False),
+        ("workflow_dispatch", "not json", False, False),
+        ("workflow_dispatch", "{}", False, False),
     ],
 )
 def test_a_dispatch_is_stored_only_when_it_records_no_image_overrides(
-    tmp_path, event, dispatch, stored
+    tmp_path, event, dispatch, stored, published
 ):
-    assert run_download(tmp_path, event, dispatch) is stored
+    assert run_download(tmp_path, event, dispatch) == (stored, published)
+
+
+@pytest.mark.parametrize(
+    ("artifacts", "published"),
+    [([{"id": 5, "name": "perf-nightly", "expired": False}], True), ([], False)],
+)
+def test_a_perf_run_is_published_unlisted_and_never_stored(tmp_path, artifacts, published):
+    """A /perf request that ran left a perf-nightly artifact; a refused one did not."""
+    got = run_download(
+        tmp_path, "issue_comment", None, ".github/workflows/perf-comment.yml", artifacts
+    )
+    assert got == (False, published)
 
 
 def run_store(tmp_path, stored_run, artifacts=()):
@@ -618,10 +670,13 @@ def run_store(tmp_path, stored_run, artifacts=()):
     for shim in ("base64", "uv", "gh"):
         (bin_dir / shim).chmod(0o755)
     temp = tmp_path / "temp"
-    (temp / "run" / "perf-nightly").mkdir(parents=True)
-    (temp / "run" / "perf-nightly" / "nightly.json").write_text(
-        json.dumps({"date": "2026-11-21", "checks": [{"check": "alpha"}, {"check": "beta"}]})
-    )
+    temp.mkdir()
+    # The store fetches the night's nightly.json itself, from its perf-nightly artifact.
+    zips = tmp_path / "zips"
+    zips.mkdir()
+    night = {"date": "2026-11-21", "checks": [{"check": "alpha"}, {"check": "beta"}]}
+    (zips / "5.zip").write_bytes(zipped({"nightly.json": json.dumps(night)}))
+    artifacts = [{"id": 5, "name": "perf-nightly", "expired": False}, *artifacts]
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
         "HOME": str(tmp_path),
@@ -633,6 +688,7 @@ def run_store(tmp_path, stored_run, artifacts=()):
         "GITHUB_WORKSPACE": str(tmp_path),
         "RUNNER_TEMP": str(temp),
         "FAKE_ARTIFACTS": str(fake_artifacts(tmp_path, list(artifacts))),
+        "FAKE_ZIPS": str(zips),
         "PYTHONPATH": str(BENCH / "src"),
     }
     done = subprocess.run(
@@ -822,7 +878,7 @@ def zipped(members: dict[str, str]) -> bytes:
 def test_fetch_takes_the_newest_live_artifact(tmp_path):
     run, calls = fake_run({"artifacts": ALPHA}, zipped({"result.json": "{}", "raw/a": "z"}))
     dest = tmp_path / "x" / "perf-result-alpha"
-    assert nightly_store.fetch("o/r", "7", "perf-result-alpha", dest, run)
+    assert nightly_store.fetch("o/r", "7", "perf-result-alpha", dest, run) == "ok"
     assert calls == [
         "repos/o/r/actions/runs/7/artifacts?name=perf-result-alpha&per_page=100",
         "repos/o/r/actions/artifacts/42/zip",
@@ -849,25 +905,25 @@ def corrupt(members: dict[str, str]) -> bytes:
 
 
 @pytest.mark.parametrize(
-    ("listing", "archive", "rc_list", "rc_zip"),
+    ("listing", "archive", "rc_list", "rc_zip", "said"),
     [
-        ({"artifacts": []}, None, 0, 0),
-        ({"artifacts": [{"id": 5, "expired": True}]}, None, 0, 0),
-        ({}, None, 1, 0),
-        ({"artifacts": [{"id": 5}]}, b"half a zip", 0, 0),
-        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}"}), 0, 1),
+        ({"artifacts": []}, None, 0, 0, "missing"),
+        ({"artifacts": [{"id": 5, "expired": True}]}, None, 0, 0, "missing"),
+        ({}, None, 1, 0, "failed"),
+        ({"artifacts": [{"id": 5}]}, b"half a zip", 0, 0, "failed"),
+        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}"}), 0, 1, "failed"),
         # A member that would land outside fails the whole artifact, as unzip did.
-        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}", "../evil": "x"}), 0, 0),
-        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}", "/abs": "x"}), 0, 0),
-        ({"artifacts": [{"id": 5}]}, corrupt({"result.json": "x"}), 0, 0),
+        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}", "../evil": "x"}), 0, 0, "failed"),
+        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}", "/abs": "x"}), 0, 0, "failed"),
+        ({"artifacts": [{"id": 5}]}, corrupt({"result.json": "x"}), 0, 0, "failed"),
     ],
 )
 def test_fetch_that_fails_leaves_no_partial_result(
-    tmp_path, no_wait, listing, archive, rc_list, rc_zip
+    tmp_path, no_wait, listing, archive, rc_list, rc_zip, said
 ):
     run, _ = fake_run(listing, archive, rc_list, rc_zip)
     dest = tmp_path / "x" / "perf-result-alpha"
-    assert not nightly_store.fetch("o/r", "7", "perf-result-alpha", dest, run)
+    assert nightly_store.fetch("o/r", "7", "perf-result-alpha", dest, run) == said
     assert not dest.exists()
     assert not (tmp_path / "x" / "evil").exists()
 
@@ -1501,3 +1557,441 @@ def test_a_check_no_earlier_night_measured_has_no_earlier_night(tmp_path):
         "micro-hw": "new",
         "soak-b": "no earlier night",
     }
+
+
+# --- what a store keeps, and the unlisted pages ------------------------------------------
+
+
+def full_artifact(tmp_path: Path) -> Path:
+    result = micro_hw(False)
+    result["artifacts"] = [
+        "raw/rows.csv",
+        "raw/big.jsonl",
+        "raw/page.html",
+        "raw/trace.svg",
+        "raw/logs",
+    ]
+    return check_artifact(
+        tmp_path / "art" / "micro-hw",
+        result,
+        {
+            "perf-vm.json": "{}",
+            "raw/rows.csv": ROWS_HEADER
+            + f"{ROW.split(' [')[0]},writes,cycles,regression,6.4,9;9,1;1,,,x\n",
+            "raw/big.jsonl": "{}\n" * 1000,
+            "raw/page.html": "<script>alert(1)</script>",
+            "raw/trace.svg": "<svg onload=alert(1)>",
+            "raw/logs/run.log": "log",
+        },
+    )
+
+
+def test_a_store_keeps_only_what_the_run_page_needs_unless_full(tmp_path):
+    art = full_artifact(tmp_path)
+    night_path = tmp_path / "nightly.json"
+    night_path.write_text(json.dumps(examples.nightly("red", [micro_hw(False)])))
+    download, _ = downloads(tmp_path, {"perf-result-micro-hw": art})
+    trimmed = nightly_store.store(night_path, "9", tmp_path / "trim", "nightly", "main", download)
+    download, _ = downloads(tmp_path, {"perf-result-micro-hw": art})
+    full = nightly_store.store(
+        night_path, "9", tmp_path / "full", "nightly", "main", download, full=True
+    )
+
+    def files(root):
+        return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+
+    assert files(tmp_path / "trim" / trimmed) == [
+        "micro-hw/perf-vm.json",
+        "micro-hw/raw/rows.csv",
+        "micro-hw/result.json",
+        "nightly.json",
+        "run.json",
+    ]
+    assert "micro-hw/raw/big.jsonl" in files(tmp_path / "full" / full)
+    assert "micro-hw/raw/logs/run.log" in files(tmp_path / "full" / full)
+    # The trimmed store is the run page's subset of the full one, byte for byte.
+    for rel in files(tmp_path / "trim" / trimmed):
+        assert (tmp_path / "trim" / trimmed / rel).read_bytes() == (
+            tmp_path / "full" / full / rel
+        ).read_bytes()
+
+
+def test_the_pages_read_the_same_from_a_trimmed_store(tmp_path):
+    """Trends and regression rows come from raw/rows.csv, which a trimmed store keeps: only the
+    run page's list of files differs."""
+    art = full_artifact(tmp_path)
+    night_path = tmp_path / "nightly.json"
+    # The night lists the check's files as its result.json does: the run page links from it.
+    result = json.loads((art / "result.json").read_text())
+    night_path.write_text(json.dumps(examples.nightly("red", [result])))
+    sites = {}
+    for name, full in (("trim", False), ("full", True)):
+        download, _ = downloads(tmp_path, {"perf-result-micro-hw": art})
+        site = tmp_path / name
+        folder = nightly_store.store(
+            night_path, "9", site / "data", "nightly", "main", download, full=full
+        )
+        dashboard.build(site / "data", site)
+        sites[name] = pages(site)
+    assert sites["trim"]["trends.html"] == sites["full"]["trends.html"]
+    assert sites["trim"]["index.html"] == sites["full"]["index.html"]
+    trim_page, full_page = sites["trim"][f"run/{folder}.html"], sites["full"][f"run/{folder}.html"]
+    assert re.sub(r"<p>Files:.*?</p>", "", trim_page) == re.sub(r"<p>Files:.*?</p>", "", full_page)
+    assert ROW in trim_page  # the regression rows, read from raw/rows.csv
+    assert "page.html" in full_page and "big.jsonl" in full_page  # stored in full: linked
+    assert "page.html" not in trim_page and "big.jsonl" not in trim_page
+
+
+class FakeActions:
+    """`gh api` over a table of workflow runs and their artifacts (zips by id), found as the
+    unlisted pages find them: through the repository's perf-nightly artifacts."""
+
+    def __init__(self):
+        self.runs: dict[int, dict] = {}
+        self.artifacts: dict[str, list[dict]] = {}
+        self.zips: dict[int, bytes] = {}
+        self.next_id = 1000
+        self.broken: set[int] = set()
+
+    def add_run(self, workflow, run_id, created, title="Perf nightly", event=None):
+        event = event or (
+            "issue_comment" if workflow == "perf-comment.yml" else "workflow_dispatch"
+        )
+        self.runs[run_id] = {
+            "id": run_id,
+            "path": f".github/workflows/{workflow}",
+            "event": event,
+            "display_title": title,
+            "created_at": created,
+        }
+
+    def add_artifact(self, run_id, name, members, created=None):
+        self.next_id += 1
+        self.artifacts.setdefault(str(run_id), []).append(
+            {
+                "id": self.next_id,
+                "name": name,
+                "created_at": created or self.runs[run_id]["created_at"],
+                "workflow_run": {"id": run_id},
+            }
+        )
+        self.zips[self.next_id] = zipped(members)
+
+    def add_perf_run(self, run_id, night, results):
+        self.add_artifact(run_id, "perf-nightly", {"nightly.json": json.dumps(night)})
+        for check, files in results.items():
+            self.add_artifact(run_id, f"perf-result-{check}", files)
+
+    def __call__(self, argv, **kwargs):
+        path = argv[2]
+        if path.endswith("/zip"):
+            kwargs["stdout"].write(self.zips[int(path.split("/")[-2])])
+            return subprocess.CompletedProcess(argv, 0, None, b"")
+        if "/actions/artifacts?" in path:
+            listed = [
+                a for arts in self.artifacts.values() for a in arts if a["name"] == "perf-nightly"
+            ]
+            page = int(path.split("page=")[-1])
+            body = {"artifacts": sorted(listed, key=lambda a: -a["id"]) if page == 1 else []}
+            return subprocess.CompletedProcess(argv, 0, json.dumps(body), "")
+        run_id = path.split("/runs/")[1].split("/")[0].split("?")[0]
+        if "/artifacts" not in path:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(self.runs[int(run_id)]), "")
+        name = path.split("name=")[1].split("&")[0]
+        found = [a for a in self.artifacts.get(run_id, []) if a["name"] == name]
+        return subprocess.CompletedProcess(argv, 0, json.dumps({"artifacts": found}), "")
+
+
+NOW = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
+
+
+def perf_night(date, label="pr-3967@727e385"):
+    night = examples.nightly("red", [micro_hw(False, HOSTILE)])
+    night["date"] = date
+    night["candidate"]["label"] = label
+    return night
+
+
+def micro_files():
+    result = micro_hw(False, HOSTILE)
+    result["artifacts"] = ["raw/rows.csv", "raw/evil.html"]
+    return {
+        "result.json": json.dumps(result),
+        "raw/rows.csv": ROWS_HEADER,
+        "raw/evil.html": "<script>alert(1)</script>",
+        "perf-vm.json": "{}",
+    }
+
+
+@pytest.fixture
+def actions():
+    gh = FakeActions()
+    # /perf runs: one inside the window, one too old, one comment that was no request
+    gh.add_run("perf-comment.yml", 501, "2026-11-20T10:00:00Z", "/perf on #3967")
+    gh.add_perf_run(501, perf_night("2026-11-20"), {"micro-hw": micro_files()})
+    gh.add_run("perf-comment.yml", 502, "2026-10-26T11:59:59Z", "/perf on #3900")
+    gh.add_perf_run(502, perf_night("2026-10-26"), {"micro-hw": micro_files()})
+    gh.add_run("perf-comment.yml", 503, "2026-11-21T10:00:00Z", "Comment, not /perf")
+    gh.add_perf_run(503, perf_night("2026-11-21"), {"micro-hw": micro_files()})
+    # a /perf-titled run that is no comment (#4039's acceptance runs ran on push): no page
+    gh.add_run("perf-comment.yml", 504, "2026-11-22T10:00:00Z", "/perf on #4039", "push")
+    gh.add_perf_run(504, perf_night("2026-11-22"), {"micro-hw": micro_files()})
+    # dispatches: one that named images, one that did not (a night on the public pages), and
+    # one that named images but whose artifacts are gone
+    gh.add_run("perf-nightly.yml", 601, "2026-11-25T10:00:00Z")
+    gh.add_artifact(601, "perf-plan", {"dispatch.json": '{"image_overrides": true}'})
+    gh.add_perf_run(601, perf_night("2026-11-25", "main@4d72ac1"), {"micro-hw": micro_files()})
+    gh.add_run("perf-nightly.yml", 602, "2026-11-25T11:00:00Z")
+    gh.add_artifact(602, "perf-plan", {"dispatch.json": '{"image_overrides": false}'})
+    gh.add_perf_run(602, perf_night("2026-11-25", "main@4d72ac1"), {"micro-hw": micro_files()})
+    gh.add_run("perf-nightly.yml", 603, "2026-11-24T10:00:00Z")
+    gh.add_artifact(603, "perf-plan", {"dispatch.json": '{"image_overrides": true}'})
+    # a scheduled night is on the runs page, not unlisted
+    gh.add_run("perf-nightly.yml", 604, "2026-11-25T00:00:00Z", event="schedule")
+    gh.add_perf_run(604, perf_night("2026-11-25", "main@4d72ac1"), {"micro-hw": micro_files()})
+    return gh
+
+
+def test_unlisted_pages_cover_the_last_30_days_of_manual_and_perf_runs(tmp_path, actions, no_wait):
+    site = tmp_path / "site"
+    (site / "pr" / "1" / "2026-01-01-1").mkdir(parents=True)  # a page from an earlier deploy
+    made = nightly_unlisted.build(site, "o/r", 30, NOW, actions)
+    assert sorted(p.relative_to(site).as_posix() for p in made) == [
+        "manual/2026-11-25-601/index.html",
+        "pr/3967/2026-11-20-501/index.html",
+    ]
+    # The 31-day-old /perf run, the dispatch that named no images, the one whose artifacts are
+    # gone and the comment that was no request get no page; an earlier deploy's page is gone.
+    assert not (site / "pr" / "3900").exists() and not (site / "pr" / "1").exists()
+    page = (site / "pr/3967/2026-11-20-501/index.html").read_text()
+    assert '<meta name="robots" content="noindex">' in page
+    assert "← Runs" not in page and "href='../../../index.html'" in page
+    assert "pr-3967 · pr-comment" in page
+    # Escaped, like every listed page.
+    assert "<script>alert" not in page and "&lt;script&gt;" in page
+    # Only the page's files, of types shown as text: never the run's own .html.
+    stored = site / "pr/3967/2026-11-20-501/data/2026-11-20-501"
+    assert sorted(p.relative_to(stored).as_posix() for p in stored.rglob("*") if p.is_file()) == [
+        "micro-hw/perf-vm.json",
+        "micro-hw/raw/rows.csv",
+        "micro-hw/result.json",
+        "nightly.json",
+        "run.json",
+    ]
+    for href in re.findall(r"href='([^']+)'", page):
+        if not href.startswith(("http", "../")):
+            assert (site / "pr/3967/2026-11-20-501" / href).resolve().is_file(), href
+
+
+def test_the_listed_pages_never_link_an_unlisted_one(tmp_path, actions, no_wait):
+    site = tmp_path / "site"
+    data = site / "data"
+    store(
+        data,
+        "2026-11-24-101",
+        examples.nightly("green", [micro_hw(True)]),
+        {"trigger": "nightly", "scope": "main"},
+    )
+    dashboard.build(data, site)
+    nightly_unlisted.build(site, "o/r", 30, NOW, actions)
+    listed = {k: v for k, v in pages(site).items() if not k.startswith(("pr/", "manual/"))}
+    assert sorted(listed) == ["index.html", "run/2026-11-24-101.html", "trends.html"]
+    for name, text in listed.items():
+        assert "pr/" not in text and "manual/" not in text, name
+        assert "noindex" not in text, name
+    assert sorted(k for k in pages(site) if k.startswith(("pr/", "manual/"))) == [
+        "manual/2026-11-25-601/index.html",
+        "pr/3967/2026-11-20-501/index.html",
+    ]
+
+
+def test_the_window_is_counted_from_each_runs_creation(tmp_path, actions, no_wait):
+    """Run 601 was created at 2026-11-25 10:00: a one-day window keeps it until 2026-11-26
+    10:00, and the first deploy after that leaves it out."""
+    before = nightly_unlisted.build(tmp_path, "o/r", 1, NOW.replace(hour=9), actions)
+    assert [p.parent.name for p in before] == ["2026-11-25-601"]
+    after = nightly_unlisted.build(tmp_path, "o/r", 1, NOW.replace(hour=10, minute=1), actions)
+    assert after == [] and not (tmp_path / "manual" / "2026-11-25-601").exists()
+
+
+def test_a_runs_page_url_is_known_before_the_page_exists(tmp_path, capsys):
+    night = tmp_path / "nightly.json"
+    night.write_text(json.dumps({"date": "2026-11-26"}))
+    argv = [
+        "--repo",
+        "FalkorDB/FalkorDB",
+        "url",
+        "--kind",
+        "pr",
+        "--nightly",
+        str(night),
+        "--run-id",
+        "77",
+        "--pr",
+        "3967",
+    ]
+    assert nightly_unlisted.main(argv, environ={}) == 0
+    assert (
+        capsys.readouterr().out.strip()
+        == "https://falkordb.github.io/FalkorDB/pr/3967/2026-11-26-77/"
+    )
+    argv[3:5] = ["--kind", "manual"]
+    assert nightly_unlisted.main(argv, environ={"PERF_PAGES_URL": "https://perf.example/"}) == 0
+    assert capsys.readouterr().out.strip() == "https://perf.example/manual/2026-11-26-77/"
+    night.write_text("{}")
+    assert nightly_unlisted.main(argv, environ={}) == 1
+
+
+def test_a_manual_run_that_named_its_images_links_its_page():
+    """Only a dispatch that named images gets an unlisted page: the gate and /perf calls, and a
+    plain dispatch (on the runs page), print no such link."""
+    steps = load_workflow("perf-nightly.yml")["jobs"]["report"]["steps"]
+    [step] = [s for s in steps if s.get("name") == "Link the run's page"]
+    assert step["if"] == (
+        "${{ !cancelled() && inputs.mode == '' && github.event_name == 'workflow_dispatch' "
+        "&& (inputs.candidate_image != '' || inputs.baseline_image != '') }}"
+    )
+    assert "bench nightly unlisted url --kind manual" in step["run"]
+    assert step["env"] == {"PERF_PAGES_URL": "${{ vars.PERF_PAGES_URL }}"}
+
+
+def test_only_githubs_404_is_a_missing_artifact(tmp_path, no_wait):
+    """A 403 (rate limit, permissions) is an answer about the request, not the run: it is tried
+    again and, if it lasts, a failed download, never "the run has none"."""
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv[2])
+        return subprocess.CompletedProcess(argv, 1, "", "gh: API rate limit exceeded (HTTP 403)")
+
+    assert nightly_store.download("o/r", "7", "perf-nightly", tmp_path / "x", run) == "failed"
+    assert len(calls) == 3
+
+
+def test_a_download_that_failed_stops_the_store_with_nothing_changed(tmp_path):
+    """A check whose artifact exists but did not download is not stored as a run without it:
+    the store stops, so the workflow fails and a re-run tries again."""
+    data = tmp_path / "data"
+    night_path = tmp_path / "nightly.json"
+    night_path.write_text(json.dumps(examples.nightly("green", [micro_hw(True)])))
+    with pytest.raises(nightly_store.StoreError, match="perf-result-micro-hw did not download"):
+        nightly_store.store(night_path, "7", data, "nightly", "main", lambda name, dest: "failed")
+    assert not data.exists() or not any(data.iterdir())
+    # A check that left no artifact at all is tolerated, as before.
+    folder = nightly_store.store(
+        night_path, "7", data, "nightly", "main", lambda name, dest: "missing"
+    )
+    assert (data / folder / "nightly.json").is_file() and not (data / folder / "micro-hw").exists()
+
+
+def test_a_run_whose_page_cannot_be_built_is_left_out_and_the_others_still_are(
+    tmp_path, actions, no_wait, monkeypatch
+):
+    real = dashboard.build_unlisted
+
+    def flaky(data, folder, out, root):
+        if folder.endswith("-601"):
+            raise OSError("File name too long")
+        return real(data, folder, out, root)
+
+    monkeypatch.setattr(dashboard, "build_unlisted", flaky)
+    made = nightly_unlisted.build(tmp_path, "o/r", 30, NOW, actions)
+    assert [p.parent.name for p in made] == ["2026-11-20-501"]
+
+
+def test_trim_copies_each_run_with_only_what_its_pages_need(tmp_path, monkeypatch):
+    src, dest = tmp_path / "src", tmp_path / "dest"
+    run = src / "2026-11-25-9"
+    files = {
+        "nightly.json": "{}",
+        "run.json": "{}",
+        "ldbc/result.json": "{}",
+        "ldbc/raw/rows.csv": "a",
+        "ldbc/raw/summary.csv": "query,phase,side,attempted,ok\n",
+        "ldbc/raw/samples.csv": "kept out",
+        "soak-a/raw/s01_social/candidate-1/stdout.log": "kept out",
+        "soak-a/raw/rows.csv": "x" * 64,
+        "soak-a/result.json": "{}",
+    }
+    for rel, text in files.items():
+        (run / rel).parent.mkdir(parents=True, exist_ok=True)
+        (run / rel).write_text(text)
+    (src / "not-a-run").mkdir()
+    monkeypatch.setattr(nightly_store, "MAX_PAGE_FILE", 32)  # soak-a's rows.csv is too big
+    assert nightly_store.trim(src, dest) == 1
+    assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == [
+        "2026-11-25-9/ldbc/raw/rows.csv",
+        "2026-11-25-9/ldbc/raw/summary.csv",
+        "2026-11-25-9/ldbc/result.json",
+        "2026-11-25-9/nightly.json",
+        "2026-11-25-9/run.json",
+        "2026-11-25-9/soak-a/result.json",
+    ]
+
+
+def run_build(tmp_path, remote):
+    """Run the deploy job's build step against a gh-pages remote that is `present` (holding one
+    night stored in full), `absent` (a repository without the branch) or `unreachable`."""
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=x"]
+    seed = tmp_path / "seed"
+    night = seed / "data" / "2026-11-24-7"
+    (night / "soak-a" / "raw" / "s01").mkdir(parents=True)
+    (night / "nightly.json").write_text(json.dumps(examples.nightly("green", [])))
+    (night / "soak-a" / "result.json").write_text("{}")
+    (night / "soak-a" / "raw" / "s01" / "stdout.log").write_text("big")
+    subprocess.run(
+        [*git, "init", "-q", "-b", "gh-pages" if remote == "present" else "main", str(seed)],
+        check=True,
+    )
+    subprocess.run([*git, "-C", str(seed), "add", "-A"], check=True)
+    subprocess.run([*git, "-C", str(seed), "commit", "-q", "-m", "seed"], check=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "base64").write_text("#!/bin/sh\nexec /usr/bin/base64\n")
+    (bin_dir / "uv").write_text(FAKE_UV)
+    (bin_dir / "gh").write_text(FAKE_GH)
+    for shim in ("base64", "uv", "gh"):
+        (bin_dir / shim).chmod(0o755)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+        "HOME": str(tmp_path),
+        "GH_TOKEN": "x",
+        "GITHUB_SERVER_URL": f"file://{tmp_path}" + ("/nowhere" if remote == "unreachable" else ""),
+        "GITHUB_REPOSITORY": "seed",
+        "RUNNER_TEMP": str(temp),
+        "FAKE_ARTIFACTS": str(fake_artifacts(tmp_path, [])),
+        "PYTHONPATH": str(BENCH / "src"),
+    }
+    done = subprocess.run(
+        ["bash", "-c", publish_step("Build the site")],
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=BENCH.parent,
+    )
+    return done, temp / "pages"
+
+
+def test_the_deploy_publishes_the_stored_nights_trimmed(tmp_path):
+    done, pages = run_build(tmp_path, "present")
+    assert done.returncode == 0, done.stderr
+    assert (pages / "data" / "2026-11-24-7" / "soak-a" / "result.json").is_file()
+    assert not (pages / "data" / "2026-11-24-7" / "soak-a" / "raw").exists()
+
+
+def test_the_deploy_starts_empty_only_when_there_is_no_gh_pages_branch(tmp_path):
+    done, _ = run_build(tmp_path / "a", "absent")
+    assert done.returncode == 0, done.stderr
+    assert "no gh-pages branch yet" in done.stdout
+    done, _ = run_build(tmp_path / "b", "unreachable")
+    assert (
+        done.returncode != 0 and "could not read the gh-pages branch" in done.stdout + done.stderr
+    )
+
+
+def test_the_answer_goes_out_without_a_page_address_it_could_not_make():
+    steps = load_workflow("perf-comment.yml")["jobs"]["answer"]["steps"]
+    [step] = [s for s in steps if s.get("name") == "Answer on the pull request"]
+    assert '--pr "$PR") || page=""' in step["run"]

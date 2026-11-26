@@ -687,6 +687,18 @@ jobs:
           PERF_CHAT_WEBHOOK: ${{ inputs.mode == '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
         run: uv run --project bench --frozen bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
 
+      # A dispatch that named its own images is not on the dashboard's runs page: it gets an
+      # unlisted page (perf-dashboard.yml, kept 30 days), linked here.
+      - name: Link the run's page
+        if: ${{ !cancelled() && inputs.mode == '' && github.event_name == 'workflow_dispatch' && (inputs.candidate_image != '' || inputs.baseline_image != '') }}
+        env:
+          PERF_PAGES_URL: ${{ vars.PERF_PAGES_URL }}
+        run: |
+          set -euo pipefail
+          url=$(uv run --project bench --frozen bench nightly unlisted url --kind manual \
+            --nightly "$RUNNER_TEMP/nightly/nightly.json" --run-id "$GITHUB_RUN_ID")
+          echo "Page: $url (appears within minutes of this run's end; kept 30 days)" | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Last, once the report is out and nightly.json is uploaded (merge job), so
       # a failing run never loses either: a red or error night fails the run.
       # The list of runs then reads as a timeline, and a failed scheduled run

@@ -9,9 +9,11 @@ It downloads each check's newest `perf-result-<check>` artifact of run <id> (wit
 timeout, tried again when a download stalls; without --nightly, the run's nightly.json from its
 `perf-nightly` artifact too) and writes
 <dir>/<date>-<id>/: nightly.json as given, run.json {"trigger": T, "scope": S}, and per check
-<check>/ holding its result.json, the runner's record (perf-vm.json or perf-hosted.json) and the
-files its result.json lists as artifacts (relative paths, none through ".."). A folder of the same
-run already there (a re-run of the night, under any date) is replaced, but never by a store that
+<check>/ holding what the run's page reads or links: result.json, raw/rows.csv and the runner's
+record (perf-vm.json or perf-hosted.json), as .json/.csv/.txt/.log only. That is about 0.5 MB of
+a full night's 80 MB: the rest stays in the run's artifacts. With --full (reading a run
+locally), every file its result.json lists instead, of any type (relative paths, none through
+".."). A folder of the same run already there (a re-run of the night, under any date) is replaced, but never by a store that
 lost a check the old folder has: then nothing changes and it exits 1. Prints the folder's name.
 
 Standard library only (with nightly.dashboard, which is too).
@@ -37,6 +39,13 @@ from pathlib import PurePosixPath
 from falkorbench.nightly import dashboard
 
 RECORDS = ("result.json", "perf-vm.json", "perf-hosted.json")
+# What a run's page reads or links, per check, and the only types it serves: a /perf candidate is
+# pull request code, so nothing it can influence is served as a page or a script.
+PAGE_FILES = ("result.json", "raw/rows.csv", "raw/summary.csv", "perf-vm.json", "perf-hosted.json")
+SHOWN = (".json", ".csv", ".txt", ".log")
+# A page file larger than this is left out (with a warning): one runaway file would count
+# against Pages' 1 GB in every deploy.
+MAX_PAGE_FILE = 5 * 1024 * 1024
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 RUN_ID_RE = re.compile(r"\d{1,20}")
 # Seconds for one `gh` call (a listing; an artifact's zip), and before each retry. Tests set them.
@@ -78,8 +87,9 @@ def _gh(
     argv: list[str], run: Runner, timeout: float, **kwargs
 ) -> subprocess.CompletedProcess | None:
     """One `gh` call under a timeout, tried again (after RETRY_DELAYS) when it fails or stalls:
-    GitHub's artifact downloads stall now and then. GitHub's own 4xx answer (no such run) is
-    returned as it is, not tried again. None when every attempt failed."""
+    GitHub's artifact downloads stall now and then. GitHub's 404 (no such run or artifact) is
+    returned as it is, not tried again; any other error (a 403 rate limit, a 5xx) is tried again.
+    None when every attempt failed."""
     for delay in (*RETRY_DELAYS, None):
         try:
             done = run(argv, timeout=timeout, check=False, **kwargs)
@@ -88,7 +98,7 @@ def _gh(
                 if isinstance(done.stderr, bytes)
                 else str(done.stderr or "")
             )
-            if done.returncode == 0 or re.search(r"HTTP 4\d\d", said):
+            if done.returncode == 0 or "HTTP 404" in said:
                 return done
             why = f"exit {done.returncode}"
         except subprocess.TimeoutExpired:
@@ -119,8 +129,8 @@ def download(repo: str, run_id: str, name: str, dest: Path, run: Runner = subpro
     if listing is None:
         warn(f"{name}: could not list its artifacts")
         return "failed"
-    if listing.returncode != 0:
-        warn(f"{name}: GitHub has no such run or artifact ({str(listing.stderr).strip()[:200]})")
+    if listing.returncode != 0:  # GitHub's 404: the run is not there
+        warn(f"{name}: GitHub has no such run ({str(listing.stderr).strip()[:200]})")
         return "missing"
     try:
         artifacts = json.loads(listing.stdout).get("artifacts") or []
@@ -157,8 +167,9 @@ def download(repo: str, run_id: str, name: str, dest: Path, run: Runner = subpro
     return "ok"
 
 
-def fetch(repo: str, run_id: str, name: str, dest: Path, run: Runner = subprocess.run) -> bool:
-    return download(repo, run_id, name, dest, run) == "ok"
+def fetch(repo: str, run_id: str, name: str, dest: Path, run: Runner = subprocess.run) -> str:
+    """download()'s answer: "ok", "missing" or "failed"."""
+    return download(repo, run_id, name, dest, run)
 
 
 def check_files(src: Path) -> list[str]:
@@ -171,6 +182,38 @@ def check_files(src: Path) -> list[str]:
         listed = None
     files += [a for a in listed if isinstance(a, str)] if isinstance(listed, list) else []
     return sorted(dict.fromkeys(files))
+
+
+def copy_page_files(src: Path, dest: Path) -> None:
+    """Only what the run page reads or links (PAGE_FILES: also ldbc's raw/summary.csv, which
+    `bench nightly failures` reads), of the types in SHOWN, each at most MAX_PAGE_FILE."""
+    for name in PAGE_FILES:
+        source = src / name
+        if not (source.is_file() and not source.is_symlink() and source.suffix in SHOWN):
+            continue
+        if source.stat().st_size > MAX_PAGE_FILE:
+            warn(f"{src.name}/{name}: {source.stat().st_size} bytes, over the page limit: left out")
+            continue
+        (dest / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, dest / name)
+
+
+def trim(src: Path, dest: Path) -> int:
+    """Copy every run under <src> (a data folder, as stored) to <dest> with only its pages'
+    files: what a deploy publishes, whatever the archive holds. Returns the number of runs."""
+    count = 0
+    for run in sorted(p for p in src.iterdir() if p.is_dir()) if src.is_dir() else []:
+        if not dashboard.FOLDER_RE.fullmatch(run.name):
+            continue
+        (dest / run.name).mkdir(parents=True, exist_ok=True)
+        for name in ("nightly.json", "run.json"):
+            if (run / name).is_file() and not (run / name).is_symlink():
+                shutil.copyfile(run / name, dest / run.name / name)
+        for check in sorted(p for p in run.iterdir() if p.is_dir()):
+            if dashboard.CHECK_RE.fullmatch(check.name):
+                copy_page_files(check, dest / run.name / check.name)
+        count += 1
+    return count
 
 
 def copy_check(src: Path, dest: Path) -> None:
@@ -198,10 +241,14 @@ def store(
     data: Path,
     trigger: str,
     scope: str,
-    download: Callable[[str, Path], bool],
+    download: Callable[[str, Path], str | bool],
+    full: bool = False,
 ) -> str:
     """Lay out run <run_id> under <data>; returns its folder's name. `download(name, dest)`
-    extracts one artifact of the run into dest, or says False."""
+    extracts one artifact of the run into dest and says "ok"; "missing" (or False) when the run
+    has none (the check left no result), which the store tolerates; "failed" when it has one that
+    did not download, which stops the store with nothing changed, so a re-run tries again. Per check, only what the run page
+    needs (copy_page_files), unless `full`: every file its result.json lists."""
     if not RUN_ID_RE.fullmatch(run_id):
         raise StoreError(f"run id {run_id!r} is not a number")
     try:
@@ -231,9 +278,12 @@ def store(
         fetched = {}
         for check in checks:
             dest = results / f"perf-result-{check}"
-            if download(f"perf-result-{check}", dest):
+            got = download(f"perf-result-{check}", dest)
+            if got is True or got == "ok":
                 fetched[check] = dest
                 continue
+            if got == "failed":
+                raise StoreError(f"perf-result-{check} did not download: run it again")
             warn(f"no perf-result-{check}")
             # A missing download must not delete what a stored run has; a check the stored run
             # never had (it left no artifact then either) is no loss.
@@ -249,7 +299,10 @@ def store(
         (dest / "run.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         for check, src in fetched.items():
             (dest / check).mkdir()
-            copy_check(src, dest / check)
+            if full:
+                copy_check(src, dest / check)
+            else:
+                copy_page_files(src, dest / check)
     return folder
 
 
@@ -263,6 +316,11 @@ def main(argv: list[str] | None = None, run: Runner = subprocess.run) -> int:
     parser.add_argument("--trigger", required=True, help="run.json trigger, e.g. nightly")
     parser.add_argument("--scope", required=True, help="run.json scope, e.g. main or pr-<N>")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", "FalkorDB/FalkorDB"))
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="every file each check lists, of any type (reading a run locally); default: the page's",
+    )
     args = parser.parse_args(argv)
     with tempfile.TemporaryDirectory() as scratch:
         night = args.nightly
@@ -286,6 +344,7 @@ def main(argv: list[str] | None = None, run: Runner = subprocess.run) -> int:
                 args.trigger,
                 args.scope,
                 lambda name, dest: fetch(args.repo, args.run_id, name, dest, run),
+                full=args.full,
             )
         except StoreError as err:
             print(f"::error::perf dashboard: {err}", file=sys.stderr)

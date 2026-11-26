@@ -422,15 +422,28 @@ never touches a night's verdict: the night has finished.
 One-time admin step: **Settings → Pages → Source: GitHub Actions** (not "deploy from
 a branch"), and let the `github-pages` environment accept the default branch.
 
-**`bench nightly store --nightly <nightly.json> --run-id <id> --data <dir> --trigger T
---scope S`** downloads each check's newest `perf-result-<check>` artifact of that run
-(`gh`; after a re-run, the last attempt's) and writes `<dir>/<date>-<id>/`:
-`nightly.json` as given, `run.json` `{"trigger": T, "scope": S}`, and per check its
-`result.json`, `perf-vm.json` / `perf-hosted.json` and the files its result lists as
-`artifacts` (relative paths only, none through `..`). A folder of the same run already
-there is replaced, except by a store that could not download a check the old folder
-has: then it changes nothing and exits 1. A `/perf` run lays out its own site with
-the same command.
+**`bench nightly store [--nightly <nightly.json>] --run-id <id> --data <dir> --trigger T
+--scope S [--full]`** downloads the run's `perf-nightly` artifact (unless `--nightly` is
+given) and each check's newest `perf-result-<check>` artifact (`gh`, under a timeout, tried
+again when a download stalls; after a re-run, the last attempt's) and writes
+`<dir>/<date>-<id>/`: `nightly.json`, `run.json` `{"trigger": T, "scope": S}`, and per
+check what its page reads or links: `result.json`, `raw/rows.csv` and `perf-vm.json` /
+`perf-hosted.json`, of types `.json`, `.csv`, `.txt`, `.log` only. That is about 0.5 MB of
+a full night's 80 MB (soak's per-scenario logs are most of it); the full files stay in the
+run's artifacts for 90 days. `--full` stores every file each check lists instead (relative
+paths only, none through `..`), for reading a run locally. A folder of the same run already
+there is replaced, except by a store that could not download a check the old folder has:
+then it changes nothing and exits 1. A `/perf` run lays out its own site with the same
+command.
+
+**Unlisted pages.** A dispatch that named its own images and a `/perf` run are not on the
+runs page. Every deploy also builds, with `bench nightly unlisted --out <site> --days 30`,
+one page for each such run created in the last 30 days, at `manual/<date>-<run id>/` and
+`pr/<N>/<date>-<run id>/`. Each page is the run's page itself, with `noindex`, over the run
+stored as above. No listed page links to them, and they are never stored on `gh-pages`: a
+page is gone at the first deploy after its run is 30 days old. `bench nightly unlisted url`
+prints a run's page address (`$PERF_PAGES_URL`, a repository variable for a custom domain,
+else `https://<owner>.github.io/<repo>/`). The `/perf` answer and a manual run's summary link it.
 
 **`bench nightly failures --data <dir> --run <date>-<run id> [--json]`** lists one stored
 run's failures: every regression (including rows a capped `result.json` left in
