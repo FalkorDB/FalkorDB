@@ -878,11 +878,12 @@ def main():
         import csv
         per = {}
         miss = 0
-        for row in csv.DictReader(open(out / "latency_ts.csv")):
-            if row["op"].startswith("lookup_"):
-                per[int(row["sec"])] = per.get(int(row["sec"]), 0) + int(row["ok"])
-            elif row["op"] == "_missed_schedule":
-                miss += int(row["err"])
+        with open(out / "latency_ts.csv", newline="") as f:
+            for row in csv.DictReader(f):
+                if row["op"].startswith("lookup_"):
+                    per[int(row["sec"])] = per.get(int(row["sec"]), 0) + int(row["ok"])
+                elif row["op"] == "_missed_schedule":
+                    miss += int(row["err"])
         vals = sorted(per.values())
         med = vals[len(vals) // 2] if vals else 0
         meta["lookup_median_ops_per_s"] = med

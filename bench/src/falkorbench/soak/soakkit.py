@@ -636,6 +636,13 @@ class Checks:
               flush=True)
 
 
+def check_no_operation_errors(checks: Checks, s: dict, severity: str = "major"):
+    """Record that no operation saw an error, from analyze()'s summary; an op named "_..."
+    is the harness's own and expects errors."""
+    bad = {k: v["errors"] for k, v in s["ops"].items() if v["errors"] and not k.startswith("_")}
+    checks.add("no operation errors", not bad, str(bad), severity)
+
+
 # ---------------------------------------------------------------- analysis
 def _linreg(xs, ys):
     n = len(xs)

@@ -58,6 +58,7 @@ BAD_EVENTS = (
     "constraint_error",
     "events_died",
     "bgsave_error",
+    "bgsave_stuck",
     "violation_odd_error",
     "indexes_stuck",
     "events_stuck",
@@ -143,11 +144,14 @@ class Ledger:
             else:
                 bucket[g][k[0]].add((k[1], k[2]))
 
-    def check(self, r) -> list[tuple[str, str]]:
+    def check(self, r, problems=None) -> list[tuple[str, str]]:
+        """(kind, message) per problem, appended to `problems` as found: the caller's list
+        keeps them when a later query raises."""
+
         def one(q):
             return r.execute_command("GRAPH.RO_QUERY", graph, q)[1][0][0]
 
-        problems = []
+        problems = [] if problems is None else problems
         for g, n in enumerate(self.n0):
             graph = gname(g)
             for label in model.UPSERT_LABELS:
@@ -444,20 +448,25 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     by_kind = collections.defaultdict(list)
     for kind, msg in ledger_problems:
         by_kind[kind].append(msg)
-    # "harness": the end-of-epoch queries themselves failed, so nothing was counted (pass None)
+    # "harness": the end-of-epoch queries failed part way, so what was not counted is unknown
+    # (pass None); a problem counted before the failure still fails its check
     unknown = by_kind["harness"]
+
+    def counted(found):
+        return False if found else (None if unknown else True)
+
     # a duplicated key is wrong whether or not a constraint is installed, so it counts here in every epoch
     checks["writes_add_up"] = {
-        "pass": None if unknown else not (by_kind["count"] or by_kind["duplicate"]),
+        "pass": counted(by_kind["count"] or by_kind["duplicate"]),
         "problems": by_kind["count"] + by_kind["duplicate"] + unknown,
     }
     checks["upsert_edges_complete"] = {
-        "pass": None if unknown else not by_kind["missing"],
+        "pass": counted(by_kind["missing"]),
         "problems": by_kind["missing"] + unknown,
     }
     wto = sum(1 for w in writes if w[5] == 1)
     checks["timed_out_writes_leave_nothing"] = {
-        "pass": None if unknown else not by_kind["timed-out"],
+        "pass": counted(by_kind["timed-out"]),
         "applies": ep["write_timeout_ms"] > 0,
         "timed_out_writes": wto,
         "problems": by_kind["timed-out"],
