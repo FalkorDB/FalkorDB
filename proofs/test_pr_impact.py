@@ -191,6 +191,37 @@ class Spans(unittest.TestCase):
         fns, ends = self.spans(lines)
         self.assertEqual(ends[0][1:3], (1, 4))
 
+    def test_blank_line_inside_a_multiline_attribute(self):
+        lines = ['fn z() {}', '#[cfg(', '    feature = "x",', '', ')]', 'fn a() {}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 3), 1)
+
+    def test_inner_attribute_belongs_to_the_enclosing_fn(self):
+        lines = ['fn outer() {', '    #![cfg(feature = "x")]', '    fn inner() {}', '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 2), 0)
+
+    def test_braces_in_the_signature_are_not_the_body(self):
+        lines = ['fn a() -> [u8; { 1 }]', '{', '    [0]', '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 3), 0)
+
+    def test_const_generic_braces_are_not_the_body(self):
+        lines = ['fn a() -> Foo<{ N }> {', '    Foo', '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(ends[0][1:3], (1, 3))
+
+    def test_fn_after_a_block_comment_closes(self):
+        lines = ['/* heading', '*/ fn a() -> u8 {', '    1', '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 3), 0)
+
+    def test_unformatted_inner_brace_does_not_end_the_fn(self):
+        lines = ['fn a() {', 'if x {', 'y();', '}', 'z();', '}', 'fn b() {}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 5), 0)
+        self.assertEqual(pr_impact.owner(fns, ends, 6), 0)
+
     def test_standalone_block_comments_belong_to_neither(self):
         lines = ['fn a() {}', '/* one */ /* two */', '/* a', '   b */', 'fn b() {}']
         fns = fns_in(lines)

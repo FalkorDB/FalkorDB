@@ -149,9 +149,9 @@ def lex(lines):
     return code, cont
 
 
-def attr_start(lines, code, j):
+def attr_start(code, j):
     """1-based line of the `#[` that opens an attribute ending on line `j`
-    (possibly multi-line), or None when line `j` does not close an attribute
+    (possibly multi-line, possibly with blank lines inside), or None when line `j` does not close an attribute
     that fills its lines. `code` is lex(lines)[0]."""
     for k in range(j, 0, -1):
         s = code[k - 1].strip()
@@ -164,8 +164,8 @@ def attr_start(lines, code, j):
                     # the attribute's own `]` must be the last character
                     return k if n == len(text) - 1 else None
             return None
-        if not lines[k - 1].strip() or s.endswith((';', '{', '}')):
-            return None
+        if s.endswith((';', '{', '}')):
+            return None                           # a blank line may sit inside the attribute
     return None
 
 
@@ -187,7 +187,9 @@ def lead_of(lines, code, start):
         s = code[j - 1].strip()
         if not s:
             j -= 1                                # blank, or only comments
-        elif s.endswith(']') and (k := attr_start(lines, code, j)) is not None:
+        elif s.endswith(']') and (k := attr_start(code, j)) is not None:
+            if code[k - 1].strip().startswith('#!['):
+                break                             # an inner attribute: it is the enclosing item's
             if not is_cosmetic(code, k):
                 behavioural.update(range(k, j + 1))
             j = k - 1
@@ -204,62 +206,58 @@ ITEM = re.compile(r'(pub(\([^)]*\))?\s+)?(unsafe\s+)?'
                   r'(mod|impl|struct|enum|union|trait|const|static|type|use|extern|macro_rules!)\b')
 
 
-def close_of(lines, code, cont, start):
-    """Line of the `}` closing the fn on line `start`, read from rustfmt's layout:
-    the first later line at the fn's own indent that starts with `}` once the
-    body has opened. Lines that start inside a string or comment are skipped.
-    None when the layout is not that (the caller then ends the span at the next
-    item), so an odd shape over-reports instead of hiding code."""
-    base = indent(lines[start - 1])
-    head = code[start - 1].strip()
-    opened = '{' in head
-    if opened and head.count('{') == head.count('}'):
-        return start                              # `fn b() {}` on one line
-    if not opened and head.endswith(';'):
-        return start                              # a bodyless trait fn
-    for k in range(start + 1, len(lines) + 1):
-        s = code[k - 1].strip()
-        if not s or cont[k - 1]:
-            continue
-        ind = indent(lines[k - 1])
-        if ind < base:
-            return None
-        if ind > base:
-            continue
-        if opened:
-            return k if s.startswith('}') else None
-        if '{' in s:
-            if s.count('{') == s.count('}'):
-                return k                          # `) -> u8 {}`
-            opened = True
-        elif s.endswith(';'):
-            return k                              # a multi-line bodyless signature
-        elif not s.startswith((')', 'where', '-', '>')):
-            return None
+def close_of(code, start, name):
+    """Line of the `}` closing the fn `name` declared on line `start`, by brace
+    matching over lexed code (lex()[0]). In the signature `()`, `[]`, `<>` and
+    braces nested in them (`[u8; { 1 }]`, `Foo<{ N }>`) are skipped, so the
+    first `{` outside them opens the body, and a `;` before it ends a bodyless
+    fn. None when the file ends first."""
+    m = re.search(r'\bfn\s+' + re.escape(name) + r'\b', code[start - 1])
+    pos = m.end() if m else 0
+    sig, braces, body, prev = 0, 0, 0, ''
+    for k in range(start, len(code) + 1):
+        for ch in (code[k - 1][pos:] if k == start else code[k - 1]):
+            if body:
+                if ch == '{':
+                    body += 1
+                elif ch == '}':
+                    body -= 1
+                    if not body:
+                        return k
+            elif braces:                          # a const block inside the signature
+                braces += (ch == '{') - (ch == '}')
+            elif ch == '{':
+                if sig:
+                    braces = 1
+                else:
+                    body = 1
+            elif ch in '([<':
+                sig += 1
+            elif ch in ')]' or (ch == '>' and prev not in '-='):
+                sig = max(sig - 1, 0)
+            elif ch == ';' and not sig:
+                return k                          # a bodyless trait or extern fn
+            prev = ch
     return None
-
-
-FN_WORD = re.compile(r'\bfn\b')
 
 
 def ends_of(fns, lines):
     """(lead, first, last, behavioural) for each fn: its body is [first, last]
     and [lead, first) is the lead above it, of which only the `behavioural`
     lines (attributes that can change behaviour: `#[cfg]`, `#[target_feature]`,
-    ...) belong to the fn. `first` is the fn line and `last` is
-    the fn's closing brace, or when its layout is not rustfmt's, the line
-    before the lead of the next item at the fn's indent or shallower (the end
-    of the file for the last one). Comments, blank lines and lint attributes between
-    two fns therefore belong to neither. A `fn` inside a string or comment owns
-    nothing."""
+    ...) belong to the fn. `first` is the fn line and `last` its closing brace
+    (when the braces never balance, the line before the lead of the next item
+    at the fn's indent or shallower, or the end of the file). Comments, blank
+    lines and lint attributes between two fns therefore belong to neither. A
+    `fn` inside a string or comment owns nothing."""
     code, cont = lex(lines)
     spans = []
-    for i, (start, _, _) in enumerate(fns):
-        if cont[start - 1] or not FN_WORD.search(code[start - 1]):
+    for i, (start, name, _) in enumerate(fns):
+        if not re.search(r'\bfn\s+' + re.escape(name) + r'\b', code[start - 1]):
             spans.append((start, start, start - 1, frozenset()))   # not a real fn: owns nothing
             continue
         lead, behavioural = lead_of(lines, code, start)
-        last = close_of(lines, code, cont, start)
+        last = close_of(code, start, name)
         if last is None:
             base = indent(lines[start - 1])
             last = len(lines)
@@ -267,9 +265,6 @@ def ends_of(fns, lines):
                 s = code[k - 1].strip()
                 if not s or cont[k - 1] or indent(lines[k - 1]) > base:
                     continue
-                if s.startswith('}'):
-                    last = k
-                    break
                 if any(f[0] == k for f in fns[i + 1:]) or ITEM.match(s):
                     last = lead_of(lines, code, k)[0] - 1
                     break
