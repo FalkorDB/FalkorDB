@@ -30,6 +30,7 @@ from falkorbench.fuzz import checks as fuzz_checks
 from falkorbench.fuzz import verdict as fuzz_verdict
 from falkorbench.ldbc import check as ldbc
 from falkorbench.nightly import dashboard
+from falkorbench.nightly import failures as nightly_failures
 from falkorbench.nightly import store as nightly_store
 from falkorbench.pokec import check as pokec
 from falkorbench.soak import check as soak
@@ -861,7 +862,9 @@ def corrupt(members: dict[str, str]) -> bytes:
         ({"artifacts": [{"id": 5}]}, corrupt({"result.json": "x"}), 0, 0),
     ],
 )
-def test_fetch_that_fails_leaves_no_partial_result(tmp_path, listing, archive, rc_list, rc_zip):
+def test_fetch_that_fails_leaves_no_partial_result(
+    tmp_path, no_wait, listing, archive, rc_list, rc_zip
+):
     run, _ = fake_run(listing, archive, rc_list, rc_zip)
     dest = tmp_path / "x" / "perf-result-alpha"
     assert not nightly_store.fetch("o/r", "7", "perf-result-alpha", dest, run)
@@ -880,3 +883,587 @@ def test_the_dashboard_and_a_perf_comment_run_share_the_store_command():
         assert "bench nightly store" in text and "bench nightly dashboard" in text
         assert "cp -R --parents" not in text and "artifacts?name=" not in text
     assert "--trigger pr-comment" in comment and '--scope "pr-$PR"' in comment
+
+
+# --- bench nightly failures: every failure of a stored run, vs the nights before it ------
+
+SOAK_HEADER = (
+    "name,metric,candidate,baseline,ratio,threshold,direction,status,crossed_first_pass,kind,note\n"
+)
+FUZZ_HEADER = "phase,side,run,extra,name,value\n"
+LDBC_HEADER = "query,phase,metric,candidate,baseline,ratio,status\n"
+KNOWN = "s10 Live (under writes) index == scan during build/after"
+
+
+def stored_check(folder: Path, check: str, result: dict, rows: str | None) -> None:
+    (folder / check / "raw").mkdir(parents=True, exist_ok=True)
+    (folder / check / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    if rows is not None:
+        (folder / check / "raw" / "rows.csv").write_text(rows, encoding="utf-8")
+
+
+def a_night(data: Path, folder: str, trigger: str, checks: dict) -> Path:
+    """A stored run whose checks are {name: (verdict, findings, rows.csv text or None)}."""
+    entries = []
+    for name, (judged, findings, _) in checks.items():
+        result = copy.deepcopy(examples.example("result-micro-pass.json"))
+        result.update(check=name, verdict=judged, findings=findings, artifacts=["raw/rows.csv"])
+        if judged == "error":
+            result["error"] = "no C4 VM came up"
+        entries.append(result)
+    night = examples.nightly("red", entries)
+    night["date"] = folder[:10]
+    (data / folder).mkdir(parents=True)
+    (data / folder / "nightly.json").write_text(json.dumps(night), encoding="utf-8")
+    (data / folder / "run.json").write_text(json.dumps({"trigger": trigger, "scope": "main"}))
+    for entry, (_, _, rows) in zip(entries, checks.values(), strict=True):
+        stored_check(data / folder, entry["check"], entry, rows)
+    return data / folder
+
+
+def finding(name, metric, status, candidate, baseline, ratio=None):
+    return {
+        "name": name,
+        "metric": metric,
+        "candidate": candidate,
+        "baseline": baseline,
+        "ratio": ratio,
+        "threshold": 1.1 if ratio else None,
+        "direction": "lower_is_worse"
+        if metric in ("invariant", "completed")
+        else "higher_is_worse",
+        "status": status,
+    }
+
+
+def keys(failures):
+    return [(f.check, f.kind, f.name, f.metric, f.both) for f in failures]
+
+
+SOAK_ROWS = SOAK_HEADER + (
+    "s03 range index finds every initial chunk,invariant,0,0,,,lower_is_worse,info,,,\n"
+    "s07 counts add up,invariant,0,1,,,lower_is_worse,regression,,,\n"
+    f"{KNOWN},invariant,0,0,,,lower_is_worse,known,,known,broke on candidate and baseline\n"
+    "s01 holds,invariant,1,1,,,lower_is_worse,ok,,,\n"
+    "s02 base only,invariant,1,0,,,lower_is_worse,info,,,\n"
+    "s04 ingest_batch,p50_ms,9,3,3.0,2.0,higher_is_worse,regression,True,,\n"
+)
+
+
+def test_failures_list_every_check_the_candidate_broke_from_the_raw_rows(tmp_path):
+    """A row absent from the findings was not unmeasured: the known flaky row and the ok-ish
+    info row live in raw/rows.csv only, and both are failures of the candidate."""
+    data = tmp_path / "data"
+    a_night(
+        data,
+        "2026-11-25-9",
+        "manual",
+        {
+            "soak-b": (
+                "regression",
+                [
+                    finding("s07 counts add up", "invariant", "regression", 0, 1),
+                    finding("s04 ingest_batch", "p50_ms", "regression", 9, 3, 3.0),
+                ],
+                SOAK_ROWS,
+            ),
+        },
+    )
+    run = nightly_failures.load_run(data, "2026-11-25-9")
+    assert keys(run.failures) == [
+        ("soak-b", "regression", "s04 ingest_batch", "p50_ms", False),
+        ("soak-b", "broken", "s03 range index finds every initial chunk", "invariant", True),
+        ("soak-b", "broken", "s07 counts add up", "invariant", False),
+        ("soak-b", "broken", KNOWN, "invariant", True),
+    ]
+    known = next(f for f in run.failures if f.name == KNOWN)
+    assert known.detail == "broken on both sides; known flaky (#3095)"
+    assert next(f for f in run.failures if f.name.startswith("s03")).detail == (
+        "broken on both sides; judged info"
+    )
+
+
+def test_fuzz_invariants_are_read_per_run_and_side(tmp_path):
+    rows = (
+        FUZZ_HEADER
+        + "".join(
+            f"control,{side},{run},0,{name},{value}\n"
+            for side, run, name, value in [
+                ("candidate", 0, "writes_add_up", 1),
+                ("candidate", 1, "writes_add_up", 0),
+                ("baseline", 0, "writes_add_up", 1),
+                ("baseline", 1, "writes_add_up", 1),
+                ("candidate", 0, "no_freeze", 0),
+                ("baseline", 0, "no_freeze", 0),
+                ("candidate", 0, "lookup p99_ms", 0),
+                ("candidate", 0, "server_stays_up", 1),
+            ]
+        )
+        + "finding (regression),candidate,,,build edge phase,900\nfinding (regression),baseline,,,build edge phase,300\n"
+    )
+    data = tmp_path / "data"
+    a_night(
+        data,
+        "2026-11-25-9",
+        "manual",
+        {
+            "fuzz": (
+                "regression",
+                [finding("build edge phase", "p50_ms", "regression", 900, 300, 3.0)],
+                rows,
+            ),
+        },
+    )
+    failures = nightly_failures.load_run(data, "2026-11-25-9").failures
+    assert keys(failures) == [
+        (
+            "fuzz",
+            "regression",
+            "build edge phase",
+            "p50_ms",
+            False,
+        ),  # the finding, not again from the row
+        ("fuzz", "broken", "control no_freeze", "invariant", True),
+        ("fuzz", "broken", "control writes_add_up", "invariant", False),
+    ]
+    assert failures[2].detail == (
+        "broken on the candidate only; broke in 1 of 2 candidate runs, 0 of 2 baseline runs"
+    )
+    assert "a timing check" in failures[1].detail
+
+
+def test_micro_hw_counts_an_erroring_query_once_and_reads_regressions_past_the_cap(tmp_path):
+    row = "{q},{c},{m},{s},{r},1;1,1;1,,,{n}\n"
+    rows = ROWS_HEADER + "".join(
+        row.format(q=q, c="reads", m=m, s=s, r=r, n=n)
+        for q, m, s, r, n in [
+            ("UDF call", "instructions", "info", "", "errors on candidate and baseline"),
+            ("UDF call", "cycles", "info", "", "errors on candidate and baseline"),
+            ("regex", "instructions", "info", "", "errors on baseline"),
+            ("new query", "instructions", "info", "", "errors on candidate"),
+            ("SKIP", "instructions", "regression", "1.9", "confirmed"),
+            ("LIMIT", "cycles", "regression", "1.5", "confirmed"),  # past the cap: no finding
+        ]
+    )
+    data = tmp_path / "data"
+    a_night(
+        data,
+        "2026-11-25-9",
+        "manual",
+        {
+            "micro-hw": (
+                "regression",
+                [
+                    finding("SKIP [reads]", "instructions", "regression", 2, 1, 1.9),
+                    finding(
+                        "new query [errors on candidate only]", "completed", "regression", 0, 1
+                    ),
+                    finding(
+                        "1 queries error on both sides (e.g. UDF call)", "completed", "info", 0, 0
+                    ),
+                ],
+                rows,
+            ),
+        },
+    )
+    assert keys(nightly_failures.load_run(data, "2026-11-25-9").failures) == [
+        ("micro-hw", "regression", "LIMIT [reads]", "cycles", False),
+        ("micro-hw", "regression", "SKIP [reads]", "instructions", False),
+        ("micro-hw", "broken", "UDF call [reads]", "errors", True),
+        ("micro-hw", "broken", "new query [reads]", "errors", False),
+    ]
+
+
+def test_ldbc_correctness_lives_in_its_findings_and_a_check_that_could_not_measure_is_an_error(
+    tmp_path,
+):
+    rows = LDBC_HEADER + "IC1,main,p50_ms,9,1,9.0,regression\nIC2,main,p50_ms,1,1,1.0,ok\n"
+    data = tmp_path / "data"
+    a_night(
+        data,
+        "2026-11-25-9",
+        "manual",
+        {
+            "ldbc": (
+                "regression",
+                [
+                    finding("IC1 p50", "p50_ms", "regression", 9, 1, 9.0),
+                    finding("IC3 completed", "completed", "info", 0, 0),
+                    finding("IC9 rows", "rows", "regression", 3, 4),
+                ],
+                rows,
+            ),
+            "micro-hw": ("error", [], None),
+        },
+    )
+    assert keys(nightly_failures.load_run(data, "2026-11-25-9").failures) == [
+        ("ldbc", "regression", "IC1 p50", "p50_ms", False),
+        ("ldbc", "broken", "IC3 completed", "completed", True),
+        ("ldbc", "broken", "IC9 rows", "rows", False),
+        ("micro-hw", "error", "micro-hw", "", False),
+    ]
+
+
+def soak_night(data, folder, trigger, rows):
+    return a_night(data, folder, trigger, {"soak-b": ("pass", [], SOAK_HEADER + rows)})
+
+
+BROKE = "{n},invariant,0,0,,,lower_is_worse,info,,,\n"
+
+
+def test_failures_are_new_still_failing_or_fixed_against_earlier_scheduled_nights(tmp_path):
+    data = tmp_path / "data"
+    soak_night(data, "2026-11-22-1", "nightly", BROKE.format(n="old") + BROKE.format(n="gone"))
+    soak_night(data, "2026-11-23-2", "nightly", BROKE.format(n="old") + BROKE.format(n="gone"))
+    soak_night(data, "2026-11-24-3", "manual", BROKE.format(n="ignored, not a night"))
+    soak_night(data, "2026-11-24-4", "nightly", BROKE.format(n="old") + BROKE.format(n="gone"))
+    soak_night(data, "2026-11-27-9", "nightly", BROKE.format(n="later night"))
+    soak_night(data, "2026-11-25-5", "pr-comment", BROKE.format(n="old") + BROKE.format(n="new"))
+    result = nightly_failures.compare(data, "2026-11-25-5")
+    assert [r.folder for r in result.history] == ["2026-11-24-4", "2026-11-23-2", "2026-11-22-1"]
+    assert {f.name: result.since[f.key] for f in result.run.failures} == {
+        "old": "since 2026-11-22",
+        "new": "new",
+    }
+    assert [f.name for f in result.fixed] == ["gone"]
+
+
+def test_a_check_this_run_did_not_measure_is_not_fixed(tmp_path):
+    data = tmp_path / "data"
+    soak_night(data, "2026-11-24-4", "nightly", BROKE.format(n="gone"))
+    a_night(data, "2026-11-25-5", "pr-comment", {"micro-hw": ("pass", [], None)})
+    result = nightly_failures.compare(data, "2026-11-25-5")
+    assert result.fixed == []
+    assert "Fixed since 2026-11-24-4 (0):" in nightly_failures.text(result)
+
+
+def test_with_no_earlier_night_the_report_says_so(tmp_path):
+    data = tmp_path / "data"
+    soak_night(data, "2026-11-25-5", "nightly", BROKE.format(n="s03 broken"))
+    result = nightly_failures.compare(data, "2026-11-25-5")
+    assert result.since[result.run.failures[0].key] == "no earlier night"
+    assert "No earlier scheduled night is stored" in nightly_failures.text(result)
+
+
+def test_the_failures_command_prints_text_or_json_and_refuses_a_missing_run(tmp_path, capsys):
+    data = tmp_path / "data"
+    soak_night(data, "2026-11-24-4", "nightly", BROKE.format(n="x"))
+    soak_night(data, "2026-11-25-5", "nightly", BROKE.format(n="x"))
+    run = CliRunner().invoke(
+        cli, ["nightly", "failures", "--data", str(data), "--run", "2026-11-25-5"]
+    )
+    assert run.exit_code == 0, run.output
+    assert (
+        "- soak-b | broken | x (invariant) | candidate 0 vs baseline 0 | broken on both sides"
+        in run.output
+    )
+    assert "since 2026-11-24" in run.output
+    run = CliRunner().invoke(
+        cli, ["nightly", "failures", "--data", str(data), "--run", "2026-11-25-5", "--json"]
+    )
+    doc = json.loads(run.output)
+    assert doc["failures"][0]["since"] == "since 2026-11-24" and doc["compared_with"] == [
+        "2026-11-24-4"
+    ]
+    assert (
+        CliRunner()
+        .invoke(cli, ["nightly", "failures", "--data", str(data), "--run", "2026-11-26-6"])
+        .exit_code
+        == 1
+    )
+
+
+def test_a_fuzz_break_is_one_failure_however_many_places_name_it(tmp_path):
+    """The per-run rows, the finding rows and result.json all name a candidate-only break (and
+    server_stays_up under the metric `completed`): one failure each."""
+    rows = FUZZ_HEADER + "".join(
+        f"{phase},{side},{run},0,{name},{value}\n"
+        for phase, side, run, name, value in [
+            ("control", "candidate", 0, "writes_add_up", 0),
+            ("control", "baseline", 0, "writes_add_up", 1),
+            ("control", "candidate", 0, "server_stays_up", 0),
+            ("control", "baseline", 0, "server_stays_up", 1),
+            ("finding (regression)", "candidate", "", "control writes_add_up", 0),
+            ("finding (regression)", "baseline", "", "control writes_add_up", 1),
+            ("finding (regression)", "candidate", "", "control server_stays_up", 0),
+            ("finding (regression)", "baseline", "", "control server_stays_up", 1),
+            # past the findings cap: only its finding rows, no per-run rows
+            ("finding (info)", "candidate", "", "long index_matches_scan", 0),
+            ("finding (info)", "baseline", "", "long index_matches_scan", 0),
+        ]
+    )
+    data = tmp_path / "data"
+    a_night(
+        data,
+        "2026-11-25-9",
+        "manual",
+        {
+            "fuzz": (
+                "regression",
+                [
+                    finding("control writes_add_up", "invariant", "regression", 0, 1),
+                    finding("control server_stays_up", "completed", "regression", 0, 1),
+                ],
+                rows,
+            ),
+        },
+    )
+    failures = nightly_failures.load_run(data, "2026-11-25-9").failures
+    assert keys(failures) == [
+        ("fuzz", "broken", "control server_stays_up", "invariant", False),
+        ("fuzz", "broken", "control writes_add_up", "invariant", False),
+        ("fuzz", "broken", "long index_matches_scan", "invariant", True),
+    ]
+    assert failures[2].detail.endswith("from its finding (no per-run rows)")
+
+
+def test_a_check_the_candidate_broke_in_some_runs_only_is_a_failure(tmp_path):
+    soak = SOAK_HEADER + (
+        "s05 used_memory stays flat (broke in 1 of 2 candidate runs),invariant,1,1,,,lower_is_worse,info,True,unconfirmed,broke in 1 of 2 candidate runs\n"
+    )
+    pokec = (
+        "dataset,workload,name,metric,candidate,baseline,ratio,direction,status,use,first_pass,re_run,detail\n"
+        "medium,read-only,q1 [read-only],completed,1,1,,lower_is_worse,info,,,,"
+        '"candidate: 0 errors, 3 timeouts in 1 of 5 runs; baseline: 0 errors, 0 timeouts in 0 of 5 runs"\n'
+        "medium,read-only,q2 [read-only],completed,1,1,,lower_is_worse,ok,,,,"
+        '"candidate: 0 errors, 0 timeouts in 0 of 5 runs; baseline: 0 errors, 0 timeouts in 0 of 5 runs"\n'
+    )
+    data = tmp_path / "data"
+    a_night(
+        data, "2026-11-25-9", "manual", {"soak-a": ("pass", [], soak), "pokec": ("pass", [], pokec)}
+    )
+    failures = nightly_failures.load_run(data, "2026-11-25-9").failures
+    assert keys(failures) == [
+        (
+            "soak-a",
+            "broken",
+            "s05 used_memory stays flat (broke in 1 of 2 candidate runs)",
+            "invariant",
+            False,
+        ),
+        ("pokec", "broken", "q1 [read-only]", "completed", False),
+    ]
+    assert "a timing check; broke in 1 of 2 candidate runs" in failures[0].detail
+    assert "3 timeouts in 1 of 5 runs" in failures[1].detail
+
+
+def test_micro_hw_queries_that_error_in_some_passes_are_a_failure(tmp_path):
+    some = "2 queries error on the candidate in some passes only (e.g. regex)"
+    data = tmp_path / "data"
+    a_night(
+        data,
+        "2026-11-25-9",
+        "manual",
+        {
+            "micro-hw": (
+                "pass",
+                [
+                    finding(some, "completed", "info", None, 1),
+                    finding(
+                        "3 queries error on both sides (e.g. UDF call)", "completed", "info", 0, 0
+                    ),
+                ],
+                ROWS_HEADER + "regex,reads,instructions,ok,1.0,1;1,1;1,,,\n",
+            ),
+        },
+    )
+    assert keys(nightly_failures.load_run(data, "2026-11-25-9").failures) == [
+        ("micro-hw", "broken", some, "completed", False),
+    ]
+
+
+def test_ldbc_requests_that_failed_are_read_from_its_summary(tmp_path):
+    summary = (
+        "query,phase,side,attempted,ok,timeouts,errors,down,rows_total,p50_ms,p95_ms,p99_ms,first_failure\n"
+        "IC14,main,candidate,49,48,1,0,0,9,,,,\nIC14,main,baseline,49,49,0,0,0,9,,,,\n"
+        "IC1,main,candidate,49,49,0,0,0,9,,,,\nIC1,main,baseline,49,49,0,0,0,9,,,,\n"
+    )
+    data = tmp_path / "data"
+    folder = a_night(data, "2026-11-25-9", "manual", {"ldbc": ("pass", [], LDBC_HEADER)})
+    (folder / "ldbc" / "raw" / "summary.csv").write_text(summary)
+    [failure] = nightly_failures.load_run(data, "2026-11-25-9").failures
+    assert (failure.name, failure.both) == ("IC14 completed", False)
+    assert "1 of 49 candidate requests failed, 0 of 49 baseline" in failure.detail
+
+
+def test_a_check_whose_files_did_not_download_is_an_error_not_a_pass(tmp_path):
+    data = tmp_path / "data"
+    folder = a_night(data, "2026-11-25-9", "manual", {"soak-b": ("pass", [], SOAK_ROWS)})
+    shutil.rmtree(folder / "soak-b")
+    [failure] = nightly_failures.load_run(data, "2026-11-25-9").failures
+    assert (failure.kind, failure.check) == ("error", "soak-b")
+    assert "did not download" in failure.detail
+
+
+def test_a_skipped_night_is_looked_through(tmp_path):
+    data = tmp_path / "data"
+    soak_night(data, "2026-11-22-1", "nightly", BROKE.format(n="old") + BROKE.format(n="gone"))
+    skipped = soak_night(data, "2026-11-23-2", "nightly", "")
+    night = json.loads((skipped / "nightly.json").read_text())
+    night.update(status="skipped", checks=[], skip_reason="main has not moved")
+    (skipped / "nightly.json").write_text(json.dumps(night))
+    soak_night(data, "2026-11-24-3", "nightly", BROKE.format(n="old"))
+    result = nightly_failures.compare(data, "2026-11-24-3")
+    assert [r.folder for r in result.history] == ["2026-11-22-1"]
+    assert result.since[result.run.failures[0].key] == "since 2026-11-22"
+    assert [f.name for f in result.fixed] == ["gone"]
+
+
+def test_regressions_read_where_lower_is_worse_and_past_the_cap(tmp_path):
+    data = tmp_path / "data"
+    a_night(
+        data,
+        "2026-11-25-9",
+        "manual",
+        {
+            "micro-hw": (
+                "regression",
+                [],
+                ROWS_HEADER + "SKIP,reads,cycles,regression,1.5,3;5,2;2,,,confirmed\n",
+            ),
+            "pokec": (
+                "regression",
+                [
+                    {
+                        **finding(
+                            "throughput [read-only]", "throughput", "regression", 468, 756, 0.62
+                        ),
+                        "direction": "lower_is_worse",
+                        "threshold": 1.3,
+                    }
+                ],
+                None,
+            ),
+        },
+    )
+    failures = {f.name: f for f in nightly_failures.load_run(data, "2026-11-25-9").failures}
+    assert failures["throughput [read-only]"].detail == "0.62x, below 1/1.30x"
+    past = failures["SKIP [reads]"]
+    assert (past.candidate, past.baseline) == (4.0, 2.0)  # the medians of the reps
+    assert past.detail == "1.50x (raw/rows.csv only: past the findings cap)"
+
+
+def test_a_run_name_that_is_not_a_stored_folder_is_refused(tmp_path):
+    data = tmp_path / "data"
+    (data / "latest").mkdir(parents=True)
+    (data / "latest" / "nightly.json").write_text("{}")
+    assert (
+        CliRunner()
+        .invoke(cli, ["nightly", "failures", "--data", str(data), "--run", "latest"])
+        .exit_code
+        == 1
+    )
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    monkeypatch.setattr(nightly_store, "RETRY_DELAYS", (0.0, 0.0))
+
+
+def stalling_run(listing, archive: bytes, stalls: int):
+    """`gh api` whose zip download stalls (times out) `stalls` times before it delivers."""
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv[2])
+        if argv[2].endswith("/zip"):
+            if sum(c.endswith("/zip") for c in calls) <= stalls:
+                kwargs["stdout"].write(archive[:10])  # part of it, then nothing
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+            kwargs["stdout"].write(archive)
+            return subprocess.CompletedProcess(argv, 0, None, b"")
+        return subprocess.CompletedProcess(argv, 0, json.dumps(listing), "")
+
+    return run, calls
+
+
+def test_a_stalled_download_is_tried_again(tmp_path, no_wait):
+    run, calls = stalling_run({"artifacts": ALPHA}, zipped({"result.json": "{}"}), stalls=2)
+    dest = tmp_path / "perf-result-alpha"
+    assert nightly_store.download("o/r", "7", "perf-result-alpha", dest, run) == "ok"
+    assert (dest / "result.json").read_text() == "{}"  # the stalled attempts' bytes were dropped
+    assert sum(c.endswith("/zip") for c in calls) == 3
+
+
+def test_a_download_that_never_arrives_fails_without_a_partial_result(tmp_path, no_wait):
+    run, _ = stalling_run({"artifacts": ALPHA}, zipped({"result.json": "{}"}), stalls=3)
+    dest = tmp_path / "perf-result-alpha"
+    assert nightly_store.download("o/r", "7", "perf-result-alpha", dest, run) == "failed"
+    assert not dest.exists()
+    run, _ = stalling_run({"artifacts": []}, b"", stalls=0)
+    assert nightly_store.download("o/r", "7", "perf-result-alpha", dest, run) == "missing"
+
+
+def test_store_fetches_the_runs_nightly_when_none_is_given(tmp_path, no_wait, capsys):
+    night = examples.nightly("green", [micro_hw(True)])
+    archives = {
+        "perf-nightly": zipped({"nightly.json": json.dumps(night)}),
+        "perf-result-micro-hw": zipped({"result.json": json.dumps(night["checks"][0])}),
+    }
+
+    def run(argv, **kwargs):
+        if argv[2].endswith("/zip"):
+            name = {"1": "perf-nightly", "2": "perf-result-micro-hw"}[argv[2].split("/")[-2]]
+            kwargs["stdout"].write(archives[name])
+            return subprocess.CompletedProcess(argv, 0, None, b"")
+        name = argv[2].split("name=")[1].split("&")[0]
+        ids = {"perf-nightly": [1], "perf-result-micro-hw": [2]}.get(name, [])
+        return subprocess.CompletedProcess(
+            argv, 0, json.dumps({"artifacts": [{"id": i} for i in ids]}), ""
+        )
+
+    data = tmp_path / "data"
+    argv = [
+        "--run-id",
+        "7",
+        "--data",
+        str(data),
+        "--trigger",
+        "manual",
+        "--scope",
+        "main",
+        "--repo",
+        "o/r",
+    ]
+    assert nightly_store.main(argv, run=run) == 0
+    folder = capsys.readouterr().out.strip()
+    assert json.loads((data / folder / "nightly.json").read_text()) == night
+    assert (data / folder / "micro-hw" / "result.json").is_file()
+
+
+@pytest.mark.parametrize(
+    ("listing", "said"),
+    [
+        ({"artifacts": []}, "has no perf-nightly artifact"),
+        (None, "did not download"),
+    ],
+)
+def test_store_says_why_a_runs_nightly_is_not_there(tmp_path, no_wait, capsys, listing, said):
+    def run(argv, **kwargs):
+        if listing is None:
+            return subprocess.CompletedProcess(argv, 1, "", "connection reset")
+        return subprocess.CompletedProcess(argv, 0, json.dumps(listing), "")
+
+    argv = [
+        "--run-id",
+        "7",
+        "--data",
+        str(tmp_path / "d"),
+        "--trigger",
+        "manual",
+        "--scope",
+        "main",
+    ]
+    assert nightly_store.main(argv, run=run) == 1
+    assert said in capsys.readouterr().err
+
+
+def test_a_run_github_does_not_know_is_missing_not_tried_again(tmp_path, no_wait):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv[2])
+        return subprocess.CompletedProcess(argv, 1, "", "gh: Not Found (HTTP 404)")
+
+    assert nightly_store.download("o/r", "1", "perf-nightly", tmp_path / "x", run) == "missing"
+    assert len(calls) == 1

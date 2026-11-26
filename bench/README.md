@@ -432,6 +432,16 @@ there is replaced, except by a store that could not download a check the old fol
 has: then it changes nothing and exits 1. A `/perf` run lays out its own site with
 the same command.
 
+**`bench nightly failures --data <dir> --run <date>-<run id> [--json]`** lists one stored
+run's failures: every regression (including rows a capped `result.json` left in
+`raw/rows.csv` only), every correctness check the candidate broke (also when it is broken on
+the baseline too, a known flaky check, or a timing check that broke in some runs: each says
+which), and every check that could not measure. Each is `new` or failing `since` a date
+against the scheduled nights stored before it, and the previous night's failures that are
+gone are listed as fixed. The repo skill `.claude/skills/perf-run` uses it to read any run
+locally (a night, a manual run, a `/perf` run, a release-gate run) and drafts the missing
+issues; it posts nothing.
+
 ## `/perf` on a pull request (#4037)
 
 A comment whose first line is

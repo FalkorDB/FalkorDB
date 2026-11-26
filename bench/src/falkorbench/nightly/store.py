@@ -3,9 +3,11 @@
 perf-dashboard.yml (a night, into the gh-pages archive) and perf-comment.yml (a `/perf` run, into a
 site of its own) both call it:
 
-  bench nightly store --nightly <nightly.json> --run-id <id> --data <dir> --trigger T --scope S
+  bench nightly store [--nightly <nightly.json>] --run-id <id> --data <dir> --trigger T --scope S
 
-It downloads each check's newest `perf-result-<check>` artifact of run <id> (with `gh`) and writes
+It downloads each check's newest `perf-result-<check>` artifact of run <id> (with `gh`, under a
+timeout, tried again when a download stalls; without --nightly, the run's nightly.json from its
+`perf-nightly` artifact too) and writes
 <dir>/<date>-<id>/: nightly.json as given, run.json {"trigger": T, "scope": S}, and per check
 <check>/ holding its result.json, the runner's record (perf-vm.json or perf-hosted.json) and the
 files its result.json lists as artifacts (relative paths, none through ".."). A folder of the same
@@ -25,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 import zlib
 from collections.abc import Callable
@@ -36,6 +39,10 @@ from falkorbench.nightly import dashboard
 RECORDS = ("result.json", "perf-vm.json", "perf-hosted.json")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 RUN_ID_RE = re.compile(r"\d{1,20}")
+# Seconds for one `gh` call (a listing; an artifact's zip), and before each retry. Tests set them.
+LIST_TIMEOUT = 60.0
+ZIP_TIMEOUT = 600.0
+RETRY_DELAYS = (5.0, 15.0)
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -67,18 +74,54 @@ def extract(archive: Path, dest: Path) -> None:
             zipped.extract(member, dest)
 
 
-def fetch(repo: str, run_id: str, name: str, dest: Path, run: Runner = subprocess.run) -> bool:
-    """Run <run_id>'s newest unexpired artifact <name>, extracted into <dest>. After a re-run
-    several artifacts share a name: the newest by id is the last attempt's."""
-    listing = run(
+def _gh(
+    argv: list[str], run: Runner, timeout: float, **kwargs
+) -> subprocess.CompletedProcess | None:
+    """One `gh` call under a timeout, tried again (after RETRY_DELAYS) when it fails or stalls:
+    GitHub's artifact downloads stall now and then. GitHub's own 4xx answer (no such run) is
+    returned as it is, not tried again. None when every attempt failed."""
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            done = run(argv, timeout=timeout, check=False, **kwargs)
+            said = (
+                done.stderr.decode(errors="replace")
+                if isinstance(done.stderr, bytes)
+                else str(done.stderr or "")
+            )
+            if done.returncode == 0 or re.search(r"HTTP 4\d\d", said):
+                return done
+            why = f"exit {done.returncode}"
+        except subprocess.TimeoutExpired:
+            why = f"no answer in {timeout:.0f} s"
+        if delay is None:
+            warn(f"gh {argv[2] if len(argv) > 2 else ''}: {why}; giving up")
+            return None
+        warn(f"gh {argv[2] if len(argv) > 2 else ''}: {why}; trying again")
+        time.sleep(delay)
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "seek"):
+            handle.seek(0)
+            handle.truncate()
+    return None
+
+
+def download(repo: str, run_id: str, name: str, dest: Path, run: Runner = subprocess.run) -> str:
+    """Run <run_id>'s newest unexpired artifact <name>, extracted into <dest>: "ok", "missing"
+    (the run has none) or "failed" (it has one that did not download). After a re-run several
+    artifacts share a name: the newest by id is the last attempt's."""
+    listing = _gh(
         ["gh", "api", f"repos/{repo}/actions/runs/{run_id}/artifacts?name={name}&per_page=100"],
+        run,
+        LIST_TIMEOUT,
         capture_output=True,
         text=True,
-        check=False,
     )
-    if listing.returncode != 0:
+    if listing is None:
         warn(f"{name}: could not list its artifacts")
-        return False
+        return "failed"
+    if listing.returncode != 0:
+        warn(f"{name}: GitHub has no such run or artifact ({str(listing.stderr).strip()[:200]})")
+        return "missing"
     try:
         artifacts = json.loads(listing.stdout).get("artifacts") or []
     except (ValueError, AttributeError):
@@ -90,27 +133,32 @@ def fetch(repo: str, run_id: str, name: str, dest: Path, run: Runner = subproces
     ]
     if not ids:
         warn(f"{name}: no artifact")
-        return False
+        return "missing"
     with tempfile.TemporaryDirectory() as scratch:
         archive = Path(scratch) / f"{name}.zip"
         with archive.open("wb") as handle:
-            done = run(
+            done = _gh(
                 ["gh", "api", f"repos/{repo}/actions/artifacts/{max(ids)}/zip"],
+                run,
+                ZIP_TIMEOUT,
                 stdout=handle,
                 stderr=subprocess.PIPE,
-                check=False,
             )
         try:
-            if done.returncode != 0:
-                raise zipfile.BadZipFile(f"gh exited {done.returncode}")
+            if done is None:
+                raise zipfile.BadZipFile("gh did not deliver it")
             dest.mkdir(parents=True, exist_ok=True)
             extract(archive, dest)
         except (OSError, EOFError, zipfile.BadZipFile, zlib.error) as err:
             # A partly extracted artifact must not pass for a result.
             shutil.rmtree(dest, ignore_errors=True)
             warn(f"{name}: artifact {max(ids)} did not download ({err})")
-            return False
-    return True
+            return "failed"
+    return "ok"
+
+
+def fetch(repo: str, run_id: str, name: str, dest: Path, run: Runner = subprocess.run) -> bool:
+    return download(repo, run_id, name, dest, run) == "ok"
 
 
 def check_files(src: Path) -> list[str]:
@@ -205,27 +253,43 @@ def store(
     return folder
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, run: Runner = subprocess.run) -> int:
     parser = argparse.ArgumentParser(prog="bench nightly store", description=__doc__.split("\n")[0])
-    parser.add_argument("--nightly", required=True, type=Path, help="the run's nightly.json")
+    parser.add_argument(
+        "--nightly", type=Path, help="the run's nightly.json; default: its perf-nightly artifact"
+    )
     parser.add_argument("--run-id", required=True, help="the run whose perf-result-* to download")
     parser.add_argument("--data", required=True, type=Path, help="holds one <date>-<id>/ per run")
     parser.add_argument("--trigger", required=True, help="run.json trigger, e.g. nightly")
     parser.add_argument("--scope", required=True, help="run.json scope, e.g. main or pr-<N>")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", "FalkorDB/FalkorDB"))
     args = parser.parse_args(argv)
-    try:
-        folder = store(
-            args.nightly,
-            args.run_id,
-            args.data,
-            args.trigger,
-            args.scope,
-            lambda name, dest: fetch(args.repo, args.run_id, name, dest),
-        )
-    except StoreError as err:
-        print(f"::error::perf dashboard: {err}", file=sys.stderr)
-        return 1
+    with tempfile.TemporaryDirectory() as scratch:
+        night = args.nightly
+        if night is None:
+            got = download(args.repo, args.run_id, "perf-nightly", Path(scratch) / "night", run)
+            if got != "ok":
+                why = (
+                    "the run has no perf-nightly artifact: it never merged its checks (cancelled, "
+                    "or its resolve job failed), or the artifact expired"
+                    if got == "missing"
+                    else "its perf-nightly artifact did not download (see the warnings above): try again"
+                )
+                print(f"::error::perf dashboard: run {args.run_id}: {why}", file=sys.stderr)
+                return 1
+            night = Path(scratch) / "night" / "nightly.json"
+        try:
+            folder = store(
+                night,
+                args.run_id,
+                args.data,
+                args.trigger,
+                args.scope,
+                lambda name, dest: fetch(args.repo, args.run_id, name, dest, run),
+            )
+        except StoreError as err:
+            print(f"::error::perf dashboard: {err}", file=sys.stderr)
+            return 1
     print(folder)
     return 0
 

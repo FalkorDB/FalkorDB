@@ -32,6 +32,7 @@ from falkorbench.counters import select_backend
 from falkorbench.fuzz import check as fuzz_check
 from falkorbench.ldbc import check as ldbc_check
 from falkorbench.nightly import dashboard as nightly_dashboard
+from falkorbench.nightly import failures as nightly_failures
 from falkorbench.nightly import merge as nightly_merge
 from falkorbench.nightly import missed_run
 from falkorbench.nightly import pr_comment
@@ -699,6 +700,13 @@ PASS_THROUGH = {
 def nightly_store_command(args):
     """Download one run's perf-result-* and lay them out as the dashboard reads them (--help)."""
     raise SystemExit(nightly_store.main(list(args)))
+
+
+@nightly.command("failures", context_settings=PASS_THROUGH)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def nightly_failures_command(args):
+    """One stored run's regressions, broken correctness checks and errors, vs earlier nights."""
+    raise SystemExit(nightly_failures.main(list(args)))
 
 
 @nightly.command("pr-comment", context_settings=PASS_THROUGH)
