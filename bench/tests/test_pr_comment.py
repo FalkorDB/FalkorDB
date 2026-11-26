@@ -686,8 +686,18 @@ def test_every_request_that_runs_is_answered():
     # Whatever the dashboard did, and even when the run was cancelled: a request that started
     # is always answered.
     assert step["if"] == "${{ always() }}"
-    # Only this attempt's nightly.json answers it: a re-run's earlier attempt left its own.
-    assert "run_started_at" in step["run"] and 'night=""' in step["run"]
+    # Only this attempt's nightly.json is used, by the dashboard and the answer alike: checked
+    # before either, and a lookup that fails leaves the results out instead of the answer.
+    names = [s.get("name") for s in jobs["answer"]["steps"]]
+    fresh = names.index("Keep only this attempt's nightly.json")
+    assert (
+        fresh
+        < names.index("Build this run's dashboard")
+        < names.index("Answer on the pull request")
+    )
+    guard = jobs["answer"]["steps"][fresh]["run"]
+    assert "run_started_at" in guard and 'rm -f "$night"' in guard
+    assert '|| started=""' in guard and '|| made=""' in guard and "set -e" not in guard
     assert jobs["measure"]["concurrency"] == {
         "group": "perf-comment-${{ needs.resolve.outputs.pr }}",
         "cancel-in-progress": False,
@@ -732,3 +742,42 @@ def test_the_candidate_is_the_image_the_passing_build_pushed_last(fake, finished
     if not go:
         assert "pushed again after" in outcome.reply and "run 800 on 222222222" in outcome.reply
         assert fake.inspected == []
+
+
+@pytest.mark.parametrize(
+    ("started", "made", "kept"),
+    [
+        ("2026-11-26T10:00:00Z", "2026-11-26T10:40:00Z", True),  # this attempt's
+        ("2026-11-26T11:00:00Z", "2026-11-26T10:40:00Z", False),  # an earlier attempt's
+        ("", "2026-11-26T10:40:00Z", False),  # the run lookup failed: unknown
+        ("2026-11-26T10:00:00Z", "", False),  # the artifact lookup failed: unknown
+    ],
+)
+def test_only_this_attempts_nightly_is_kept(tmp_path, started, made, kept):
+    step = next(
+        s["run"]
+        for s in comment_workflow()["jobs"]["answer"]["steps"]
+        if s.get("name") == "Keep only this attempt's nightly.json"
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$2" in\n'
+        f'  */artifacts*) [[ -n "{made}" ]] && echo "{made}" || exit 1 ;;\n'
+        f'  *) [[ -n "{started}" ]] && echo "{started}" || exit 1 ;;\n'
+        "esac\n"
+    )
+    (bin_dir / "gh").chmod(0o755)
+    night = tmp_path / "nightly" / "nightly.json"
+    night.parent.mkdir()
+    night.write_text("{}")
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_REPOSITORY": "o/r",
+        "GITHUB_RUN_ID": "5",
+    }
+    done = subprocess.run(["bash", "-c", step], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr  # never fails the job: the answer still goes out
+    assert night.exists() is kept

@@ -157,6 +157,23 @@ jobs:
           name: perf-nightly
           path: ${{ runner.temp }}/nightly
 
+      # A re-run keeps the earlier attempt's perf-nightly when this attempt never reached its
+      # merge: only one made since this attempt started is this run's, for the dashboard and
+      # the answer alike. A lookup that fails proves nothing: the results are left out and the
+      # answer says the run left none, rather than giving none at all.
+      - name: Keep only this attempt's nightly.json
+        run: |
+          set -uo pipefail
+          night=$RUNNER_TEMP/nightly/nightly.json
+          [[ -f $night ]] || exit 0
+          started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at) || started=""
+          made=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=perf-nightly" \
+            --jq '[.artifacts[] | select(.expired | not) | .created_at] | max // ""') || made=""
+          if [[ -z $started || -z $made || $made < $started ]]; then
+            echo "::warning::perf-nightly (${made:-unknown}) is not known to be this attempt's (started ${started:-unknown}): left out"
+            rm -f "$night"
+          fi
+
       - name: Build this run's dashboard
         id: site
         run: |
@@ -196,16 +213,7 @@ jobs:
           set -euo pipefail
           night=$RUNNER_TEMP/nightly/nightly.json
           page=""
-          # A re-run keeps the earlier attempt's perf-nightly when this attempt never reached its
-          # merge: only one made since this attempt started answers it.
-          started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
-          made=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=perf-nightly" \
-            --jq '[.artifacts[] | select(.expired | not) | .created_at] | max // ""')
-          if [[ -f $night && ( -z $made || $made < $started ) ]]; then
-            echo "perf-nightly ($made) is from an earlier attempt (this one started $started): not this run's"
-            night=""
-          fi
-          if [[ -n $night && -f $night ]]; then
+          if [[ -f $night ]]; then
             # No address (a night with no usable date): the answer goes out without it.
             page=$(uv run --project bench --frozen bench nightly unlisted url --kind pr \
               --nightly "$night" --run-id "$GITHUB_RUN_ID" --pr "$PR") || page=""
