@@ -1315,7 +1315,7 @@ impl Graph {
         &self,
         names: impl IntoIterator<Item = &'a str>,
     ) -> Result<(), NodeOpError> {
-        let mut next = self.schema.relationship_types.len();
+        let registered = self.schema.relationship_types.len();
         let mut new: FxHashSet<&str> = FxHashSet::default();
         for name in names {
             // A registered type already has its id, which may itself be past
@@ -1323,8 +1323,8 @@ impl Graph {
             let idx = if let Some(t) = self.get_type_id(name) {
                 t.0
             } else if new.insert(name) {
-                next += 1;
-                next - 1
+                // The i-th distinct new name takes id `registered + i`.
+                registered + new.len() - 1
             } else {
                 continue;
             };
