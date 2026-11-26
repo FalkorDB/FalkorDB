@@ -7,3 +7,9 @@ fn settings_fail_before_init() {
     assert!(!is_initialized());
     assert!(set_nthreads(1).is_err());
 }
+
+#[test]
+#[should_panic(expected = "GxB_ANY_PAIR_BOOL")]
+fn reading_a_builtin_before_init_panics() {
+    let _ = Lazy::force(&ANY_PAIR_BOOL);
+}
