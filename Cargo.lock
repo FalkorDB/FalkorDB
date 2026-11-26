@@ -562,6 +562,7 @@ dependencies = [
  "crossfire",
  "csv",
  "feral-metis",
+ "graphblas-sys",
  "itertools 0.15.0",
  "json-escape",
  "lru",
@@ -594,6 +595,13 @@ dependencies = [
  "graph",
  "libc",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "graphblas-sys"
+version = "0.1.0"
+dependencies = [
+ "native-deps",
 ]
 
 [[package]]

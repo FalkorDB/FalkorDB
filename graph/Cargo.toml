@@ -35,6 +35,7 @@ index-falkordb = ["dep:feral-metis"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+graphblas-sys = { path = "../crates/graphblas-sys" }
 ahash = "0.8"
 arc-swap = "1"
 arcstr = "1.2.0"

@@ -12,11 +12,11 @@
 )]
 
 use super::lagraph_bindings::{
-    LAGr_TriangleCount_Method, LAGr_TriangleCount_Presort, LAGraph_Graph, LAGraph_PrintLevel,
+    LAGr_TriangleCount_Method, LAGr_TriangleCount_Presort, LAGraph_Graph,
 };
 use super::{
-    GrB_BinaryOp, GrB_Descriptor, GrB_Index, GrB_Info, GrB_Matrix, GrB_Monoid, GrB_Scalar,
-    GrB_Semiring, GrB_Type, GrB_Vector,
+    GrB_BinaryOp, GrB_Descriptor, GrB_Index, GrB_Info, GrB_Matrix, GrB_Monoid, GrB_Semiring,
+    GrB_Type, GrB_Vector,
 };
 
 // LAGraphX-specific constant
