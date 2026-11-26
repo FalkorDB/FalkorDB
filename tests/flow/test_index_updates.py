@@ -348,9 +348,11 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
         answers(written)
 
         # The flag's defining behaviour: a predicate the native index cannot serve is an error,
-        # not a RediSearch answer. A string equality is one such predicate today.
+        # not a RediSearch answer. A union with a range member is one such predicate today: the
+        # planner hands the `OR` to the index whole, and the native union serves only equalities
+        # and `IN` lists.
         try:
-            g.query("MATCH (n:NF) WHERE n.v = 'probe' RETURN n")
+            g.query("MATCH (n:NF) WHERE n.v = 1 OR n.v > 7 RETURN n")
             native_only = False
         except ResponseError as e:
             self.env.assertContains("native index cannot serve", str(e))

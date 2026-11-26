@@ -213,23 +213,23 @@ graph/src/index/redisearch/mod.rs	RediSearch_IndexInfoFree	897	AXIOMATISED	RediS
 graph/src/index/redisearch/mod.rs	RediSearch_ExportCapi	902	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_Init	905	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_CleanupModule	914	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	79	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	65	PROVEN	LeafAosD.docLeBytes: docLeBytes_spec (assert passes iff doc < 256^DOC_BYTES), docLeBytes_lossless, aosBuildD_some, aosBuildD_none
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	94	PROVEN	Leaf.readWidth_eq, readWidth_admitted (#3285: exact on every is_read_width width)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	448	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	474	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
-graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	595	PROVEN	Leaf.makePrivate_cow
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	42	PROVEN	Leaf.pow2BytesFor_spec, lt_widthFor
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	77	PROVEN	Leaf.partitionPoint_spec
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	count	180	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	key	189	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc	201	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	iter	233	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	to_pairs	238	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	raw	350	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc_layout	213	PROVEN	Leaf.docLayout_spec; LeafAosD.docLayoutD_spec (FIELD, FIELD + DOC_BYTES, DOC_BYTES)
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_pairs	260	PROVEN	Leaf.fromPairs_roundtrip, scan_doc, scan_distinct; LeafAosD.fromPairsD_roundtrip (every DOC_BYTES in {1,2,4,8}), fromPairsD8
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_parts	319	PROVEN	Leaf.fromParts_spec, fromParts_format
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	85	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	71	PROVEN	LeafAosD.docLeBytes: docLeBytes_spec (assert passes iff doc < 256^DOC_BYTES), docLeBytes_lossless, aosBuildD_some, aosBuildD_none
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	100	PROVEN	Leaf.readWidth_eq, readWidth_admitted (#3285: exact on every is_read_width width)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	353	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	488	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	547	PROVEN	Leaf.makePrivate_cow
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	43	PROVEN	Leaf.pow2BytesFor_spec, lt_widthFor
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	78	PROVEN	Leaf.partitionPoint_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	count	183	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	key	192	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc	204	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	iter	236	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	to_pairs	241	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	raw	353	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc_layout	216	PROVEN	Leaf.docLayout_spec; LeafAosD.docLayoutD_spec (FIELD, FIELD + DOC_BYTES, DOC_BYTES)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_pairs	263	PROVEN	Leaf.fromPairs_roundtrip, scan_doc, scan_distinct; LeafAosD.fromPairsD_roundtrip (every DOC_BYTES in {1,2,4,8}), fromPairsD8
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_parts	322	PROVEN	Leaf.fromParts_spec, fromParts_format
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	count	18	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	key	23	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	doc	31	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
@@ -264,3 +264,16 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	merge
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	block_copy_merge	370	PROVEN	Leaf.ciBcm_spec, bcmL_eq_merge, bcmL_spec
 graph/src/runtime/pending.rs	resync_published_indexes	1844	PROVEN	edge arm keyed by (src, dst, id): EdgeResync.resyncEdgeKeys_spec (re-add iff live in committed under the committed endpoints; delete iff gone from committed and known to private, under the private endpoints), resyncEdgeKeys_disjoint, resyncEdges; the property RollbackRestoresEdgeIndex is refuted by bug2781_rollback_not_restored / bug2781_orphan_edge_doc (OPEN, #2781 still open at 256ab4d3f); fix shape resyncEdgesFixed_restores (node arm and full spec: proofs/pending_commit)
 graph/src/graph/graph.rs	commit_edge_index_locked	3988	PROVEN	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.commitEdgeAddKeys_mem, commitEdgeAddKeys_missing (= resyncEdgeKeys .1); also proofs/graph_queries Index.commitEdgeDocs_mem
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::empty	515	PROVEN	<Leaf as Page>::empty = from_pairs(&[]) under the const assert: Leaf.fromPairs_roundtrip; the assert: cow_btree Assert.constAssert; tree level `.leaf []` (cow_btree Page.lean)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::build	521	PROVEN	<Leaf as Page>::build = chunks(LEAF_MAX).map(from_pairs): Leaf.fromPairs_roundtrip; tree level cow_btree fromSorted_wf (Page.lean)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::count	526	PROVEN	<Leaf as Page>::count = Leaf::count: Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::min	530	PROVEN	<Leaf as Page>::min = (key(0), doc(0)): Leaf.dispatch_spec; tree level cow_btree minOpt_head (Page.lean)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::is_underfull	534	PROVEN	<Leaf as Page>::is_underfull = count < LEAF_MAX / 2: Leaf.dispatch_spec; tree level cow_btree isUnderfull_leaf (Page.lean)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::insert	538	PROVEN	<Leaf as Page>::insert = Leaf::insert, Split -> one right page: cow_btree leafInsert_spec, insertOneR_eq, insertOneR_spec (Page.lean)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::remove	552	PROVEN	<Leaf as Page>::remove = Leaf::remove: cow_btree leafRemove_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::merge_batch	560	PROVEN	<Leaf as Page>::merge_batch = Leaf::merge_batch: Leaf.mergeBatch_spec; list level cow_btree applyBatch_chain
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::remove_batch	569	PROVEN	<Leaf as Page>::remove_batch (survivor merge-walk, from_pairs): Leaf.fromPairs_roundtrip; list level cow_btree removeBatch_good, subtract_eq (Page.lean)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::combine	590	PROVEN	<Leaf as Page>::combine (aos_combine or rebuild, split at count/2): cow_btree combine_spec, combine_good, combine_two_moves (Page.lean, MergeEscape.lean)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::heap_bytes	612	PROVEN	<Leaf as Page>::heap_bytes = raw().len(): cow_btree heapBytes_eq, heapBytes_aos
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::assert_leaf_params	619	PROVEN	LEAF_MAX in 2..=256, is_read_width(DOC_BYTES): cow_btree Assert.constAssert; isReadWidth_iff, readWidth_admitted
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::aos_combine	635	PROVEN	folded into combine (same count/2 split at list level): cow_btree combine_spec, combine_good; bytes: Leaf.aos_roundtrip, readU64, readWidth_eq

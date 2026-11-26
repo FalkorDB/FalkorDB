@@ -13,6 +13,8 @@ import FalkorCowBTree.Extract
 import FalkorCowBTree.BatchAssert
 import FalkorCowBTree.InsertBatchWF
 import FalkorCowBTree.Assert
+import FalkorCowBTree.Page
+import FalkorCowBTree.MergeEscape
 
 /-!
 # `cow_btree`: Lean 4 model and proofs
