@@ -1,0 +1,243 @@
+{
+  "schema": 1,
+  "check": "micro-hw",
+  "verdict": "pass",
+  "confirmed": false,
+  "summary": "no confirmed regression past its threshold; 14 improvement(s); 373 rows on instructions, cycles, branch_misses, l2_misses, alloc_bytes",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:551329ab7205066bc356a032a0adfcfb2c71e6697658063858cda645b61c161b",
+    "commit": "3bba59f2f8703614f5ea5b73e4b9f65fe1bf55f1",
+    "label": "main@3bba59f"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "c4-standard-8",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.30GHz",
+    "cores": 8
+  },
+  "started": "2026-11-27T00:33:24Z",
+  "finished": "2026-11-27T00:48:54Z",
+  "findings": [
+    {
+      "name": "rel entity return [reads]",
+      "metric": "instructions",
+      "candidate": 15921618.6,
+      "baseline": 17765994.9,
+      "ratio": 0.896185,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "multi-edge agg [reads]",
+      "metric": "instructions",
+      "candidate": 12846136.8,
+      "baseline": 14562428.0,
+      "ratio": 0.882143,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "SET indexed edge prop [writes]",
+      "metric": "instructions",
+      "candidate": 8913115.0,
+      "baseline": 10124636.9,
+      "ratio": 0.880339,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "WITH order limit [reads]",
+      "metric": "instructions",
+      "candidate": 16490940.8,
+      "baseline": 18735227.2,
+      "ratio": 0.88021,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "SET unindexed edge prop [writes]",
+      "metric": "instructions",
+      "candidate": 8881907.9,
+      "baseline": 10103426.1,
+      "ratio": 0.879099,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "labelPropagation all types [reads]",
+      "metric": "branch_misses",
+      "candidate": 165747.392869,
+      "baseline": 218410.730309,
+      "ratio": 0.758879,
+      "threshold": 1.25,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "ORDER BY + LIMIT [reads]",
+      "metric": "instructions",
+      "candidate": 19872562.9,
+      "baseline": 27910897.1,
+      "ratio": 0.712,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "edge + type() [reads]",
+      "metric": "instructions",
+      "candidate": 31206289.3,
+      "baseline": 45312832.6,
+      "ratio": 0.688685,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "delete edge [writes]",
+      "metric": "instructions",
+      "candidate": 672971.78734,
+      "baseline": 1035663.3,
+      "ratio": 0.649798,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "comprehension to string [reads]",
+      "metric": "alloc_bytes",
+      "candidate": 191336.828,
+      "baseline": 295528.348,
+      "ratio": 0.64744,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "SKIP + LIMIT [reads]",
+      "metric": "cycles",
+      "candidate": 2166160.3,
+      "baseline": 4000768.5,
+      "ratio": 0.541436,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "SKIP + LIMIT [reads]",
+      "metric": "instructions",
+      "candidate": 6398165.4,
+      "baseline": 12150681.6,
+      "ratio": 0.526568,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "expr func filter [reads]",
+      "metric": "alloc_bytes",
+      "candidate": 121872.44,
+      "baseline": 236117.676,
+      "ratio": 0.516151,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "string funcs [reads]",
+      "metric": "alloc_bytes",
+      "candidate": 1718.964,
+      "baseline": 21735.44,
+      "ratio": 0.079086,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "writes: median per-row ratio over 68 rows (40 up, 28 down, 0 unchanged)",
+      "metric": "instructions",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 1.00493,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "reads: median per-row ratio over 305 rows (158 up, 147 down, 0 unchanged)",
+      "metric": "cycles",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 1.00257,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "reads: median per-row ratio over 305 rows (135 up, 170 down, 0 unchanged)",
+      "metric": "alloc_bytes",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.999064,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "reads: median per-row ratio over 305 rows (134 up, 171 down, 0 unchanged)",
+      "metric": "instructions",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.999046,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "writes: median per-row ratio over 68 rows (29 up, 39 down, 0 unchanged)",
+      "metric": "alloc_bytes",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.998949,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "writes: median per-row ratio over 68 rows (26 up, 42 down, 0 unchanged)",
+      "metric": "cycles",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.974697,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    }
+  ],
+  "error": null,
+  "incomplete": null,
+  "broken": [],
+  "artifacts": [
+    "raw/hw.json",
+    "raw/measure-baseline-r1.csv",
+    "raw/measure-baseline-r1.log",
+    "raw/measure-baseline-r2.csv",
+    "raw/measure-baseline-r2.log",
+    "raw/measure-candidate-r1.csv",
+    "raw/measure-candidate-r1.log",
+    "raw/measure-candidate-r2.csv",
+    "raw/measure-candidate-r2.log",
+    "raw/perf-probe.txt",
+    "raw/rows.csv"
+  ]
+}

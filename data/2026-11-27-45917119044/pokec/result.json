@@ -1,0 +1,181 @@
+{
+  "schema": 1,
+  "check": "pokec",
+  "verdict": "pass",
+  "confirmed": false,
+  "summary": "Pass (nightly): 12 runs, 404 rows compared; no row regressed past 1.3x after a re-run, every run finished, no new PING freeze; 14 improvements.",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:551329ab7205066bc356a032a0adfcfb2c71e6697658063858cda645b61c161b",
+    "commit": "3bba59f2f8703614f5ea5b73e4b9f65fe1bf55f1",
+    "label": "main@3bba59f"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "n4-standard-16",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+    "cores": 16
+  },
+  "started": "2026-11-27T00:32:47Z",
+  "finished": "2026-11-27T00:46:56Z",
+  "findings": [
+    {
+      "name": "throughput [5% writes]",
+      "metric": "throughput",
+      "candidate": 215.843,
+      "baseline": 152.982,
+      "ratio": 1.410905,
+      "threshold": 1.3,
+      "direction": "lower_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "throughput [read-only]",
+      "metric": "throughput",
+      "candidate": 610.314,
+      "baseline": 409.802,
+      "ratio": 1.48929,
+      "threshold": 1.3,
+      "direction": "lower_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "all queries [5% writes]",
+      "metric": "p50_ms",
+      "candidate": 2.591,
+      "baseline": 4.079,
+      "ratio": 0.635205,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "all queries [5% writes]",
+      "metric": "p95_ms",
+      "candidate": 99.839,
+      "baseline": 220.159,
+      "ratio": 0.453486,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "all queries [read-only]",
+      "metric": "p99_ms",
+      "candidate": 97.791,
+      "baseline": 248.831,
+      "ratio": 0.393002,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "all queries [read-only]",
+      "metric": "p95_ms",
+      "candidate": 28.159,
+      "baseline": 78.335,
+      "ratio": 0.359469,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "shortest_path [read-only]",
+      "metric": "p99_ms",
+      "candidate": 11.327,
+      "baseline": 268.287,
+      "ratio": 0.04222,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "shortest_path_with_filter [read-only]",
+      "metric": "p99_ms",
+      "candidate": 10.623,
+      "baseline": 276.479,
+      "ratio": 0.038422,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "shortest_path_with_filter [read-only]",
+      "metric": "p95_ms",
+      "candidate": 6.591,
+      "baseline": 258.047,
+      "ratio": 0.025542,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "shortest_path [read-only]",
+      "metric": "p95_ms",
+      "candidate": 5.471,
+      "baseline": 261.119,
+      "ratio": 0.020952,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "shortest_path [5% writes]",
+      "metric": "p50_ms",
+      "candidate": 1.839,
+      "baseline": 162.815,
+      "ratio": 0.011295,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "shortest_path_with_filter [5% writes]",
+      "metric": "p50_ms",
+      "candidate": 1.591,
+      "baseline": 157.695,
+      "ratio": 0.010089,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "shortest_path_with_filter [read-only]",
+      "metric": "p50_ms",
+      "candidate": 1.239,
+      "baseline": 167.935,
+      "ratio": 0.007378,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "shortest_path [read-only]",
+      "metric": "p50_ms",
+      "candidate": 1.255,
+      "baseline": 178.175,
+      "ratio": 0.007044,
+      "threshold": 1.3,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    }
+  ],
+  "error": null,
+  "incomplete": null,
+  "broken": [],
+  "artifacts": [
+    "raw/check.log",
+    "raw/notes.txt",
+    "raw/queries-medium-read.jsonl",
+    "raw/queries-medium-write5.jsonl",
+    "raw/rows.csv",
+    "raw/runs",
+    "raw/runs.csv",
+    "raw/servers.json",
+    "raw/setup.log"
+  ]
+}

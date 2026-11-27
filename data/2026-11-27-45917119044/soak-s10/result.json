@@ -1,0 +1,183 @@
+{
+  "schema": 1,
+  "check": "soak-s10",
+  "verdict": "regression",
+  "confirmed": true,
+  "summary": "1 of 1 scenarios measured, nightly (300 s per side); 6 pass/fail check(s) broken on the candidate: s10 Live (under writes) index == scan during build/after (baseline too: yes, #3095, known flaky), s10 Live: index-path count == scan-path count (same query) (baseline too: no, #3095, known flaky), s10 after build person_age: indexed result == ground truth (baseline too: yes, #3512), s10 after build person_city: indexed result == ground truth (baseline too: yes, #3512) \u2026; known flaky, broke on the \u2026",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:551329ab7205066bc356a032a0adfcfb2c71e6697658063858cda645b61c161b",
+    "commit": "3bba59f2f8703614f5ea5b73e4b9f65fe1bf55f1",
+    "label": "main@3bba59f"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "n4-standard-16",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+    "cores": 16
+  },
+  "started": "2026-11-27T00:48:47Z",
+  "finished": "2026-11-27T01:01:33Z",
+  "findings": [
+    {
+      "name": "s10 Live (under writes) index == scan during build/after",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "s10 Live: index-path count == scan-path count (same query)",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 1,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "s10 after build person_age: indexed result == ground truth",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "s10 after build person_city: indexed result == ground truth",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "s10 before restart: Person.age indexed results == ground truth",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "s10 during build person_city: result == ground truth",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": null,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "s10 during build person_age: result == ground truth",
+      "metric": "invariant",
+      "candidate": null,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s10 unique OPERATIONAL accepts fresh value",
+      "metric": "invariant",
+      "candidate": null,
+      "baseline": 1,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s10 unique OPERATIONAL rejects duplicate insert",
+      "metric": "invariant",
+      "candidate": null,
+      "baseline": 1,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s10 unique OPERATIONAL rejects duplicate via SET",
+      "metric": "invariant",
+      "candidate": null,
+      "baseline": 1,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s10 unique dropped: duplicates allowed again",
+      "metric": "invariant",
+      "candidate": null,
+      "baseline": 1,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    }
+  ],
+  "error": null,
+  "incomplete": null,
+  "broken": [
+    {
+      "name": "s10 Live (under writes) index == scan during build/after",
+      "baseline_too": true,
+      "issue": 3095,
+      "introduced": false
+    },
+    {
+      "name": "s10 Live: index-path count == scan-path count (same query)",
+      "baseline_too": false,
+      "issue": 3095,
+      "introduced": false
+    },
+    {
+      "name": "s10 after build person_age: indexed result == ground truth",
+      "baseline_too": true,
+      "issue": 3512,
+      "introduced": false
+    },
+    {
+      "name": "s10 after build person_city: indexed result == ground truth",
+      "baseline_too": true,
+      "issue": 3512,
+      "introduced": false
+    },
+    {
+      "name": "s10 before restart: Person.age indexed results == ground truth",
+      "baseline_too": true,
+      "issue": 3512,
+      "introduced": false
+    },
+    {
+      "name": "s10 during build person_city: result == ground truth",
+      "baseline_too": false,
+      "issue": 3512,
+      "introduced": false
+    }
+  ],
+  "artifacts": [
+    "raw/rows.csv",
+    "raw/runs.csv",
+    "raw/s10_schema_under_load",
+    "raw/servers.json"
+  ]
+}

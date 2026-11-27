@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "check": "soak-s11",
+  "vm_name": "gce-gh-45917119044-46-31969",
+  "zone": "us-central1-a",
+  "machine_type": "n4-standard-16",
+  "fallback_used": false,
+  "create_error": null,
+  "command_exit": 0,
+  "timed_out": false,
+  "pmu": null
+}

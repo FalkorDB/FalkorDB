@@ -1,0 +1,4 @@
+{
+  "trigger": "nightly",
+  "scope": "main"
+}

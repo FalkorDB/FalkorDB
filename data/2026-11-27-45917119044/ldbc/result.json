@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "check": "ldbc",
+  "verdict": "regression",
+  "confirmed": true,
+  "summary": "13 of 14 LDBC complex reads compared at SF0.1 (nightly); regression: IC3 did not finish (baseline too), IC14 did not finish (baseline too)",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:551329ab7205066bc356a032a0adfcfb2c71e6697658063858cda645b61c161b",
+    "commit": "3bba59f2f8703614f5ea5b73e4b9f65fe1bf55f1",
+    "label": "main@3bba59f"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "n4-standard-16",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+    "cores": 16
+  },
+  "started": "2026-11-27T00:50:50Z",
+  "finished": "2026-11-27T01:04:00Z",
+  "findings": [
+    {
+      "name": "IC3 completed",
+      "metric": "completed",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "IC14 completed",
+      "metric": "completed",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "load",
+      "metric": "throughput",
+      "candidate": 26307.3,
+      "baseline": 26524.7,
+      "ratio": 0.991804,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    }
+  ],
+  "error": null,
+  "incomplete": null,
+  "broken": [
+    {
+      "name": "IC3 completed",
+      "baseline_too": true,
+      "issue": 4001,
+      "introduced": false
+    },
+    {
+      "name": "IC14 completed",
+      "baseline_too": true,
+      "issue": null,
+      "introduced": false
+    }
+  ],
+  "artifacts": [
+    "raw/baseline-server.log",
+    "raw/candidate-server.log",
+    "raw/explain/baseline/IC1.txt",
+    "raw/explain/baseline/IC10.txt",
+    "raw/explain/baseline/IC11.txt",
+    "raw/explain/baseline/IC12.txt",
+    "raw/explain/baseline/IC13.txt",
+    "raw/explain/baseline/IC14.txt",
+    "raw/explain/baseline/IC2.txt",
+    "raw/explain/baseline/IC3.txt",
+    "raw/explain/baseline/IC4.txt",
+    "raw/explain/baseline/IC5.txt",
+    "raw/explain/baseline/IC6.txt",
+    "raw/explain/baseline/IC7.txt",
+    "raw/explain/baseline/IC8.txt",
+    "raw/explain/baseline/IC9.txt",
+    "raw/explain/candidate/IC1.txt",
+    "raw/explain/candidate/IC10.txt",
+    "raw/explain/candidate/IC11.txt",
+    "raw/explain/candidate/IC12.txt",
+    "raw/explain/candidate/IC13.txt",
+    "raw/explain/candidate/IC14.txt",
+    "raw/explain/candidate/IC2.txt",
+    "raw/explain/candidate/IC3.txt",
+    "raw/explain/candidate/IC4.txt",
+    "raw/explain/candidate/IC5.txt",
+    "raw/explain/candidate/IC6.txt",
+    "raw/explain/candidate/IC7.txt",
+    "raw/explain/candidate/IC8.txt",
+    "raw/explain/candidate/IC9.txt",
+    "raw/load.json",
+    "raw/params.json",
+    "raw/rows.csv",
+    "raw/run.json",
+    "raw/samples.csv",
+    "raw/summary.csv"
+  ]
+}

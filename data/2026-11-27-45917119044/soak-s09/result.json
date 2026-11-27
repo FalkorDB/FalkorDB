@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "check": "soak-s09",
+  "verdict": "pass",
+  "confirmed": false,
+  "summary": "1 of 1 scenarios measured, nightly (300 s per side); no regression",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:551329ab7205066bc356a032a0adfcfb2c71e6697658063858cda645b61c161b",
+    "commit": "3bba59f2f8703614f5ea5b73e4b9f65fe1bf55f1",
+    "label": "main@3bba59f"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "n4-standard-16",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+    "cores": 16
+  },
+  "started": "2026-11-27T00:48:19Z",
+  "finished": "2026-11-27T01:01:02Z",
+  "findings": [],
+  "error": null,
+  "incomplete": null,
+  "broken": [],
+  "artifacts": [
+    "raw/rows.csv",
+    "raw/runs.csv",
+    "raw/s09_replication",
+    "raw/servers.json"
+  ]
+}

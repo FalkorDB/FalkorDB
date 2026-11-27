@@ -1,0 +1,163 @@
+phase,side,run,extra,name,value
+control,candidate,0,0,no_freeze,1
+control,candidate,0,0,no_timeouts_while_waiting,1
+control,candidate,0,0,writers_dont_starve,0
+control,candidate,0,0,quiet_graphs_stay_fast,0
+control,candidate,0,0,requests_drain,1
+control,candidate,0,0,no_error_replies,1
+control,candidate,0,0,writes_add_up,1
+control,candidate,0,0,upsert_edges_complete,1
+control,candidate,0,0,server_stays_up,1
+control-build,candidate,0,0,g0 nodes_s,3.567
+control-build,candidate,0,0,g0 edges_s,7.412
+control-build,candidate,0,0,g1 nodes_s,0.341
+control-build,candidate,0,0,g1 edges_s,1.367
+control,candidate,0,0,lookup p99_ms,3585.9
+control,candidate,0,0,filter-sort p99_ms,3534.9
+control,candidate,0,0,distinct p99_ms,3560.4
+control,candidate,0,0,scan-lookup p99_ms,3684.0
+control,candidate,0,0,cheap read timeouts,0
+control,candidate,0,0,all read timeouts,0
+control,candidate,0,0,worst ping ms,50.5
+control,baseline,1,0,no_freeze,1
+control,baseline,1,0,no_timeouts_while_waiting,1
+control,baseline,1,0,writers_dont_starve,0
+control,baseline,1,0,quiet_graphs_stay_fast,0
+control,baseline,1,0,requests_drain,1
+control,baseline,1,0,no_error_replies,1
+control,baseline,1,0,writes_add_up,1
+control,baseline,1,0,upsert_edges_complete,1
+control,baseline,1,0,server_stays_up,1
+control-build,baseline,1,0,g0 nodes_s,3.701
+control-build,baseline,1,0,g0 edges_s,8.155
+control-build,baseline,1,0,g1 nodes_s,0.344
+control-build,baseline,1,0,g1 edges_s,1.422
+control,baseline,1,0,lookup p99_ms,3451.5
+control,baseline,1,0,filter-sort p99_ms,3417.1
+control,baseline,1,0,distinct p99_ms,3486.7
+control,baseline,1,0,scan-lookup p99_ms,3573.2
+control,baseline,1,0,cheap read timeouts,0
+control,baseline,1,0,all read timeouts,0
+control,baseline,1,0,worst ping ms,76.8
+control,baseline,2,0,no_freeze,1
+control,baseline,2,0,no_timeouts_while_waiting,1
+control,baseline,2,0,writers_dont_starve,0
+control,baseline,2,0,quiet_graphs_stay_fast,0
+control,baseline,2,0,requests_drain,1
+control,baseline,2,0,no_error_replies,1
+control,baseline,2,0,writes_add_up,1
+control,baseline,2,0,upsert_edges_complete,1
+control,baseline,2,0,server_stays_up,1
+control-build,baseline,2,0,g0 nodes_s,3.663
+control-build,baseline,2,0,g0 edges_s,8.05
+control-build,baseline,2,0,g1 nodes_s,0.329
+control-build,baseline,2,0,g1 edges_s,1.386
+control,baseline,2,0,lookup p99_ms,3409.5
+control,baseline,2,0,filter-sort p99_ms,3369.1
+control,baseline,2,0,distinct p99_ms,3482.0
+control,baseline,2,0,scan-lookup p99_ms,3600.8
+control,baseline,2,0,cheap read timeouts,0
+control,baseline,2,0,all read timeouts,0
+control,baseline,2,0,worst ping ms,57.2
+control,candidate,3,0,no_freeze,1
+control,candidate,3,0,no_timeouts_while_waiting,1
+control,candidate,3,0,writers_dont_starve,0
+control,candidate,3,0,quiet_graphs_stay_fast,0
+control,candidate,3,0,requests_drain,1
+control,candidate,3,0,no_error_replies,1
+control,candidate,3,0,writes_add_up,1
+control,candidate,3,0,upsert_edges_complete,1
+control,candidate,3,0,server_stays_up,1
+control-build,candidate,3,0,g0 nodes_s,3.568
+control-build,candidate,3,0,g0 edges_s,7.443
+control-build,candidate,3,0,g1 nodes_s,0.345
+control-build,candidate,3,0,g1 edges_s,1.393
+control,candidate,3,0,lookup p99_ms,3544.9
+control,candidate,3,0,filter-sort p99_ms,3572.1
+control,candidate,3,0,distinct p99_ms,3534.4
+control,candidate,3,0,scan-lookup p99_ms,3697.1
+control,candidate,3,0,cheap read timeouts,0
+control,candidate,3,0,all read timeouts,0
+control,candidate,3,0,worst ping ms,50.6
+control,baseline,4,1,no_freeze,1
+control,baseline,4,1,no_timeouts_while_waiting,1
+control,baseline,4,1,writers_dont_starve,0
+control,baseline,4,1,quiet_graphs_stay_fast,0
+control,baseline,4,1,requests_drain,1
+control,baseline,4,1,no_error_replies,1
+control,baseline,4,1,writes_add_up,1
+control,baseline,4,1,upsert_edges_complete,1
+control,baseline,4,1,server_stays_up,1
+control-build,baseline,4,1,g0 nodes_s,3.693
+control-build,baseline,4,1,g0 edges_s,8.161
+control-build,baseline,4,1,g1 nodes_s,0.342
+control-build,baseline,4,1,g1 edges_s,1.429
+control,baseline,4,1,lookup p99_ms,3428.5
+control,baseline,4,1,filter-sort p99_ms,3471.7
+control,baseline,4,1,distinct p99_ms,3461.9
+control,baseline,4,1,scan-lookup p99_ms,3530.4
+control,baseline,4,1,cheap read timeouts,0
+control,baseline,4,1,all read timeouts,0
+control,baseline,4,1,worst ping ms,78.7
+control,candidate,5,1,no_freeze,1
+control,candidate,5,1,no_timeouts_while_waiting,1
+control,candidate,5,1,writers_dont_starve,0
+control,candidate,5,1,quiet_graphs_stay_fast,0
+control,candidate,5,1,requests_drain,1
+control,candidate,5,1,no_error_replies,1
+control,candidate,5,1,writes_add_up,1
+control,candidate,5,1,upsert_edges_complete,1
+control,candidate,5,1,server_stays_up,1
+control-build,candidate,5,1,g0 nodes_s,3.657
+control-build,candidate,5,1,g0 edges_s,7.585
+control-build,candidate,5,1,g1 nodes_s,0.338
+control-build,candidate,5,1,g1 edges_s,1.401
+control,candidate,5,1,lookup p99_ms,3602.2
+control,candidate,5,1,filter-sort p99_ms,3645.0
+control,candidate,5,1,distinct p99_ms,3551.9
+control,candidate,5,1,scan-lookup p99_ms,3702.6
+control,candidate,5,1,cheap read timeouts,0
+control,candidate,5,1,all read timeouts,0
+control,candidate,5,1,worst ping ms,74.9
+build,candidate,0,0,edges_ms,1864.0
+build,candidate,0,0,nodes_ms,873.0
+build,candidate,0,0,probe_1_ms,0.48
+build,candidate,0,0,probe_100_ms,0.604
+build,baseline,1,0,edges_ms,2000.0
+build,baseline,1,0,nodes_ms,896.0
+build,baseline,1,0,probe_1_ms,0.36
+build,baseline,1,0,probe_100_ms,0.664
+build,baseline,2,0,edges_ms,1999.0
+build,baseline,2,0,nodes_ms,895.0
+build,baseline,2,0,probe_1_ms,0.419
+build,baseline,2,0,probe_100_ms,0.622
+build,candidate,3,0,edges_ms,1859.0
+build,candidate,3,0,nodes_ms,874.0
+build,candidate,3,0,probe_1_ms,0.353
+build,candidate,3,0,probe_100_ms,0.481
+finding (ok),candidate,,0,control no_freeze,1
+finding (ok),baseline,,0,control no_freeze,1
+finding (ok),candidate,,0,control no_timeouts_while_waiting,1
+finding (ok),baseline,,0,control no_timeouts_while_waiting,1
+finding (regression),candidate,,0,control writers_dont_starve,0
+finding (regression),baseline,,0,control writers_dont_starve,0
+finding (regression),candidate,,0,control quiet_graphs_stay_fast,0
+finding (regression),baseline,,0,control quiet_graphs_stay_fast,0
+finding (ok),candidate,,0,control requests_drain,1
+finding (ok),baseline,,0,control requests_drain,1
+finding (ok),candidate,,0,control no_error_replies,1
+finding (ok),baseline,,0,control no_error_replies,1
+finding (ok),candidate,,0,control writes_add_up,1
+finding (ok),baseline,,0,control writes_add_up,1
+finding (ok),candidate,,0,control upsert_edges_complete,1
+finding (ok),baseline,,0,control upsert_edges_complete,1
+finding (ok),candidate,,0,control server_stays_up,1
+finding (ok),baseline,,0,control server_stays_up,1
+finding (ok),candidate,,0,build edge phase,1861.5
+finding (ok),baseline,,0,build edge phase,1999.5
+finding (ok),candidate,,0,build node phase,873.5
+finding (ok),baseline,,0,build node phase,895.5
+finding (ok),candidate,,0,build edge query 1 row,0.416
+finding (ok),baseline,,0,build edge query 1 row,0.389
+finding (ok),candidate,,0,build edge query 100 rows,0.542
+finding (ok),baseline,,0,build edge query 100 rows,0.643
