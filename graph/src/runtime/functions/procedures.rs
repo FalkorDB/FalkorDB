@@ -35,6 +35,7 @@ use crate::{
         value::Value,
     },
 };
+use arcstr::ArcStr;
 use std::sync::{Arc, LazyLock};
 use thin_vec::{ThinVec, thin_vec};
 
@@ -134,7 +135,7 @@ pub fn register(funcs: &mut Functions) {
                                     [(0, "RANGE"), (1, "VECTOR"), (2, "FULLTEXT")]
                                 {
                                     if seen[slot] {
-                                        types.push(Value::String(Arc::new(name.to_string())));
+                                        types.push(Value::String(ArcStr::from(name)));
                                     }
                                 }
                                 types_map.insert(attr.clone(), Value::List(Arc::new(types)));
@@ -152,7 +153,7 @@ pub fn register(funcs: &mut Functions) {
                                     .and_then(|fs| fs.iter().find_map(|f| f.vector_options()))
                                 {
                                     attr_opts.insert(
-                                        Arc::new(String::from("dimension")),
+                                        ArcStr::from("dimension"),
                                         // `try_from`, not `as`. This was
                                         // `i64::from` on a `u32` until
                                         // `dimension` widened to the wire's
@@ -170,8 +171,8 @@ pub fn register(funcs: &mut Functions) {
                                         ),
                                     );
                                     attr_opts.insert(
-                                        Arc::new(String::from("similarityFunction")),
-                                        Value::String(Arc::new(
+                                        ArcStr::from("similarityFunction"),
+                                        Value::String(ArcStr::from(
                                             vopts
                                                 .similarity_function
                                                 .clone()
@@ -179,15 +180,15 @@ pub fn register(funcs: &mut Functions) {
                                         )),
                                     );
                                     attr_opts.insert(
-                                        Arc::new(String::from("M")),
+                                        ArcStr::from("M"),
                                         Value::Int(vopts.m.unwrap_or(16) as i64),
                                     );
                                     attr_opts.insert(
-                                        Arc::new(String::from("efConstruction")),
+                                        ArcStr::from("efConstruction"),
                                         Value::Int(vopts.ef_construction.unwrap_or(200) as i64),
                                     );
                                     attr_opts.insert(
-                                        Arc::new(String::from("efRuntime")),
+                                        ArcStr::from("efRuntime"),
                                         Value::Int(vopts.ef_runtime.unwrap_or(10) as i64),
                                     );
                                 }
@@ -198,19 +199,19 @@ pub fn register(funcs: &mut Functions) {
                             // Language defaults to english and stopwords to an
                             // empty list (parity with FalkorDB C).
                             col_language.push(Value::String(
-                                language.unwrap_or_else(|| Arc::new(String::from("english"))),
+                                language.unwrap_or_else(|| ArcStr::from("english")),
                             ));
                             col_stopwords.push(Value::List(Arc::new(stopwords.map_or_else(
                                 ThinVec::new,
                                 |sw| sw.into_iter().map(Value::String).collect(),
                             ))));
-                            col_entitytype.push(Value::String(Arc::new(entity_type)));
+                            col_entitytype.push(Value::String(ArcStr::from(entity_type)));
                             col_status.push(if pending > 0 {
-                                Value::String(Arc::new(format!(
+                                Value::String(ArcStr::from(format!(
                                     "[Indexing] {progress}/{total}: UNDER CONSTRUCTION"
                                 )))
                             } else {
-                                Value::String(Arc::new(String::from("OPERATIONAL")))
+                                Value::String(ArcStr::from("OPERATIONAL"))
                             });
 
                             // Build the `info.fields` list: one entry per
@@ -253,15 +254,15 @@ pub fn register(funcs: &mut Functions) {
                                 .map(|name| {
                                     let mut field_map = OrderMap::default();
                                     field_map.insert(
-                                        Arc::new(String::from("name")),
-                                        Value::String(Arc::new(name)),
+                                        ArcStr::from("name"),
+                                        Value::String(ArcStr::from(name)),
                                     );
                                     Value::Map(Arc::new(field_map))
                                 })
                                 .collect();
                             let mut info_map = OrderMap::default();
                             info_map.insert(
-                                Arc::new(String::from("fields")),
+                                ArcStr::from("fields"),
                                 Value::List(Arc::new(fields_list)),
                             );
                             col_info.push(Value::Map(Arc::new(info_map)));
@@ -407,13 +408,13 @@ pub fn register(funcs: &mut Functions) {
             let mut col_status = Vec::with_capacity(constraints.len());
             for c in constraints {
                 // positional order: type, label, properties, entitytype, status
-                col_type.push(Value::String(Arc::new(c.ct.to_string())));
+                col_type.push(Value::String(ArcStr::from(c.ct.to_string())));
                 col_label.push(Value::String(c.label.clone()));
                 col_properties.push(Value::List(Arc::new(
                     c.properties.iter().map(|p| Value::String(p.clone())).collect(),
                 )));
-                col_entitytype.push(Value::String(Arc::new(c.entity_type.to_string())));
-                col_status.push(Value::String(Arc::new(c.status.to_string())));
+                col_entitytype.push(Value::String(ArcStr::from(c.entity_type.to_string())));
+                col_status.push(Value::String(ArcStr::from(c.status.to_string())));
             }
 
             Ok(Batch::from_columns([
@@ -434,7 +435,7 @@ pub fn register(funcs: &mut Functions) {
         fn dbms_procedures(_, _args) {
             let funcs = get_functions();
             // Collect references and sort by name up front so we never pay
-            // for map lookups (and the Arc<String> allocations they used to
+            // for map lookups (and the ArcStr allocations they used to
             // require) inside the sort comparator.
             let mut procs: Vec<&Arc<super::GraphFn>> = funcs
                 .iter()
@@ -445,10 +446,10 @@ pub fn register(funcs: &mut Functions) {
             let mut col_name = Vec::with_capacity(procs.len());
             let mut col_mode = Vec::with_capacity(procs.len());
             for f in procs {
-                col_name.push(Value::String(Arc::new(f.name.clone())));
-                col_mode.push(Value::String(Arc::new(String::from(
+                col_name.push(Value::String(ArcStr::from(f.name.clone())));
+                col_mode.push(Value::String(ArcStr::from(
                     if f.write { "WRITE" } else { "READ" },
-                ))));
+                )));
             }
 
             Ok(Batch::from_columns([
@@ -567,7 +568,7 @@ fn build_columns(entries: &[Arc<super::GraphFn>]) -> [Vec<Value>; 8] {
     let mut col_udf = Vec::with_capacity(n);
 
     for f in entries {
-        col_name.push(Value::String(Arc::new(f.name.clone())));
+        col_name.push(Value::String(ArcStr::from(f.name.clone())));
         col_return_type.push(type_to_dbms_value(&f.ret_type));
 
         let args_list: ThinVec<Value> = match &f.args_type {
@@ -605,8 +606,8 @@ fn build_columns(entries: &[Arc<super::GraphFn>]) -> [Vec<Value>; 8] {
 /// The `Type::Any` spelling: a 17-name union, ~130 bytes. Built once — most
 /// functions accept and return `Any`, so `dbms.functions()` would otherwise
 /// rebuild this string a few hundred times per call.
-static ANY_UNION: LazyLock<Arc<String>> =
-    LazyLock::new(|| Arc::new(type_to_dbms_string(&Type::Any)));
+static ANY_UNION: LazyLock<ArcStr> =
+    LazyLock::new(|| ArcStr::from(type_to_dbms_string(&Type::Any)));
 
 /// A type's `dbms.functions()` display string, as a ready-to-clone [`Value`].
 ///
@@ -618,12 +619,12 @@ fn type_to_dbms_value(t: &Type) -> Value {
     /// Interns one fixed spelling in its own `static`.
     macro_rules! interned {
         ($name:literal) => {{
-            static S: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new(String::from($name)));
-            Value::String(Arc::clone(&S))
+            static S: LazyLock<ArcStr> = LazyLock::new(|| ArcStr::from($name));
+            Value::String(ArcStr::clone(&S))
         }};
     }
     match t {
-        Type::Any => Value::String(Arc::clone(&ANY_UNION)),
+        Type::Any => Value::String(ArcStr::clone(&ANY_UNION)),
         Type::Null => interned!("Null"),
         Type::Bool => interned!("Boolean"),
         Type::Int => interned!("Integer"),
@@ -642,7 +643,7 @@ fn type_to_dbms_value(t: &Type) -> Value {
         Type::Duration => interned!("Duration"),
         // Composite: the spelling depends on the members, so it is built.
         // Rare — no registered function uses it in a hot column.
-        Type::Union(_) => Value::String(Arc::new(type_to_dbms_string(t))),
+        Type::Union(_) => Value::String(ArcStr::from(type_to_dbms_string(t))),
         Type::Optional(inner) => type_to_dbms_value(inner),
     }
 }

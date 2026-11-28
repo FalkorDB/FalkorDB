@@ -9,6 +9,8 @@
 pub mod data_structures;
 
 #[cfg(feature = "index-falkordb")]
+use arcstr::ArcStr;
+#[cfg(feature = "index-falkordb")]
 pub mod cch;
 
 #[cfg(feature = "index-falkordb")]
@@ -52,7 +54,7 @@ pub mod versioned;
 #[must_use]
 pub fn unsupported_by_native_index(
     entity: &str,
-    label: &std::sync::Arc<String>,
+    label: &ArcStr,
     query: &crate::index::IndexQuery<crate::runtime::value::Value>,
 ) -> String {
     format!(
@@ -161,7 +163,7 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
 fn union_members<'a>(
     children: &'a [crate::index::IndexQuery<crate::runtime::value::Value>],
     top_level: bool,
-    out: &mut Vec<(&'a std::sync::Arc<String>, bool)>,
+    out: &mut Vec<(&'a ArcStr, bool)>,
 ) {
     use crate::index::IndexQuery as Q;
     for child in children {
@@ -177,6 +179,7 @@ fn union_members<'a>(
 
 #[cfg(all(test, feature = "index-falkordb"))]
 mod tests {
+    use arcstr::ArcStr;
     use std::sync::Arc;
 
     use super::describe_predicate;
@@ -188,7 +191,7 @@ mod tests {
         v: i64,
     ) -> Q<Value> {
         Q::Equal {
-            key: Arc::new(attr.to_string()),
+            key: ArcStr::from(attr),
             value: Value::Int(v),
         }
     }
@@ -198,7 +201,7 @@ mod tests {
         v: i64,
     ) -> Q<Value> {
         Q::Range {
-            key: Arc::new(attr.to_string()),
+            key: ArcStr::from(attr),
             min: Some(Value::Int(v)),
             max: None,
             include_min: false,
@@ -211,7 +214,7 @@ mod tests {
         values: Vec<Value>,
     ) -> Q<Value> {
         Q::InList {
-            key: Arc::new(attr.to_string()),
+            key: ArcStr::from(attr),
             list: Value::List(Arc::new(values.into_iter().collect())),
         }
     }
@@ -219,10 +222,7 @@ mod tests {
     /// `IN` reaches the index whole, so its message tests the values rather than assuming them.
     #[test]
     fn a_declined_in_list_says_whether_a_value_is_non_numeric() {
-        let mixed = in_list(
-            "a",
-            vec![Value::Int(1), Value::String(Arc::new("x".to_string()))],
-        );
+        let mixed = in_list("a", vec![Value::Int(1), Value::String(ArcStr::from("x"))]);
         assert_eq!(
             describe_predicate(&mixed),
             "an IN list on `a` with a non-numeric value"
@@ -240,8 +240,8 @@ mod tests {
         let mixed = Q::Or(vec![
             eq("a", 1),
             Q::Equal {
-                key: Arc::new("a".to_string()),
-                value: Value::String(Arc::new("x".to_string())),
+                key: ArcStr::from("a"),
+                value: Value::String(ArcStr::from("x")),
             },
         ]);
         let msg = describe_predicate(&mixed);
@@ -271,10 +271,7 @@ mod tests {
 
         // An IN list is a member kind the union serves; its string value is what declines it.
         let mixed_in = Q::Or(vec![
-            in_list(
-                "a",
-                vec![Value::Int(1), Value::String(Arc::new("x".to_string()))],
-            ),
+            in_list("a", vec![Value::Int(1), Value::String(ArcStr::from("x"))]),
             eq("a", 2),
         ]);
         let msg = describe_predicate(&mixed_in);

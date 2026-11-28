@@ -22,6 +22,7 @@
 //!             output rows with edge + endpoint IDs
 //! ```
 
+use arcstr::ArcStr;
 use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
@@ -57,7 +58,7 @@ use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter
 pub struct EdgeByIndexScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
     query: &'a IndexQuery<QueryExpr<Variable>>,
     transposed: bool,
     /// Holds the parent batch being expanded and the per-row edge iterators, and
@@ -80,7 +81,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
@@ -473,8 +474,8 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
 mod tests {
     use super::*;
 
-    fn key() -> Arc<String> {
-        Arc::new("v".to_string())
+    fn key() -> ArcStr {
+        ArcStr::from("v")
     }
 
     fn in_list(values: &[Value]) -> IndexQuery<Value> {
@@ -505,10 +506,7 @@ mod tests {
         let lossy = Value::Int(9_007_199_254_740_993);
         let cases: [(&[Value], bool); 5] = [
             (&[Value::Int(1), Value::Float(2.5), Value::Bool(true)], true),
-            (
-                &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
-                true,
-            ),
+            (&[Value::Int(1), Value::String(ArcStr::from("a"))], true),
             (&[], false),
             (&[Value::Int(1), lossy.clone()], false),
             (&[lossy], false),

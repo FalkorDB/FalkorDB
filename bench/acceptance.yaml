@@ -1,0 +1,318 @@
+# Acceptance pairs: for each nightly perf check, image pairs whose right answer
+# is known, and the answer the check must give. The same image compared with
+# itself must pass; 6.2.0 against main@4c1088949 must flag the rows #3963 fixed;
+# and so on. A check is accepted when an independent run of every pair (the
+# acceptance run) comes out as expected; the owner's own run is evidence only.
+#
+# Every pair runs in mode nightly, on GCE (micro-hw: a C4 VM with counters),
+# with both images and their labels/commits passed to the check:
+#
+#   <command> --candidate <image> --baseline <image> --out <dir> --mode nightly \
+#     --candidate-label <label> --baseline-label <label> \
+#     [--candidate-commit <commit>] [--baseline-commit <commit>]
+#
+# Images were pinned on 2026-11-24 with `docker buildx imagetools inspect`.
+# Commits are the release tags' commits (git tags v6.0.1, v6.0.4, v6.2.0,
+# v6.2.1, v4.22.2, v4.22.3, v4.22.4) and main's merge commit for #3963. cleanup-rc-images.yml
+# deletes old rc-* images, so the main@4c1088949 digest can disappear; if it
+# does, re-pin it here rather than substitute a tag.
+#
+# expect.verdict      pass | regression. Absent: the verdict is not part of the
+#                     expectation. An empty expect ({}):
+#                     only a valid result.json is required.
+# expect.findings     each entry must match at least one finding in the
+#                     result with that `status` (and, when given, that
+#                     `metric`, or one of a list of metrics), and a name that
+#                     is `name` exactly or contains `name_regex` (Python
+#                     re.search, case-insensitive).
+#                     Contract v1.4 fixes these patterns: checks name their
+#                     findings so that they match.
+# expect.no_regression_findings
+#                     true: no finding may have status regression
+# expect.no_regression_findings_matching
+#                     no finding with status regression has a name matching
+#                     this pattern (same matching as name_regex)
+# expect.regressions_only_known_breaks
+#                     true: every regression finding is a known break, a
+#                     correctness row that soak's ISSUES map names (its
+#                     KNOWN_FLAKY rows among them) and that the result's
+#                     `broken` list names with that issue; a performance row,
+#                     a crash or any other break fails the pair. The verdict
+#                     may be regression (contract v1.14: a break on the
+#                     candidate is red) but never error: an error measured
+#                     nothing to judge, so it fails the pair.
+#                     falkorbench.soak.check.unknown_breaks lists what fails
+#                     it. Soak's A/A pairs only.
+# judge               what a person checks by hand in the findings and
+#                     artifacts, beyond the fields above
+
+schema: 1
+
+images:
+  main-4c1088949: &main-4c1088949
+    label: main@4c1088949
+    image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+    commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+  v6.2.0: &v6-2-0
+    label: 6.2.0
+    image: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+    commit: d8c329b777c177fc7343d959157d6acdf7398fa5
+  v6.2.1: &v6-2-1
+    label: 6.2.1
+    image: falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+    commit: 617955cf660770f33e69fb9765e8b75df03636c1
+  v6.0.4: &v6-0-4
+    label: 6.0.4
+    image: falkordb/falkordb-server@sha256:698a6e748b42699c1f63af01f8902652b764582e363731de56c7d566c322c209
+    commit: 6ca3adc9d0418f76c5a15f820552e0603a65e553
+  v6.0.1: &v6-0-1
+    label: 6.0.1
+    image: falkordb/falkordb-server@sha256:f4f60c62532b67f8651d0f4f50bbb4db7548717b502bd05abd80e668f2d974c6
+    commit: 32aacf47f23f9df7f7da216f74eeb07f537feb94
+  c-v4.22.3: &c-v4-22-3
+    label: C v4.22.3
+    image: falkordb/falkordb-server@sha256:ae49d4f04f72f71e0a85b005a3a04f1917f51c527b59d1560ed6074ad3b0e884
+    commit: 3dbf13e9efec3f340226d3994cba4296e7c3b7bc
+  c-v4.22.2: &c-v4-22-2
+    label: C v4.22.2
+    image: falkordb/falkordb-server@sha256:3c4e618ed169893bc8346e4d8e51ed2c270b484c91d93e3da5c82745db9117c2
+    commit: 7b61f511de44613e4f3d26e629ac0143f6e594b2
+  c-v4.22.4: &c-v4-22-4
+    label: C v4.22.4
+    image: falkordb/falkordb-server@sha256:4e651dac5dbabf3169d91af06db4be13ee7679ffc392f14bac5fa730349b5dbf
+    commit: 958fbead7d6e08d50d48d4776f0f310ea1dfb9a4
+
+checks:
+  micro-hw:
+    - id: micro-hw-a-a
+      candidate: *main-4c1088949
+      baseline: *main-4c1088949
+      mode: nightly
+      expect:
+        verdict: pass
+        no_regression_findings: true
+    - id: micro-hw-a-a-6.2.0
+      candidate: *v6-2-0
+      baseline: *v6-2-0
+      mode: nightly
+      expect:
+        verdict: pass
+        no_regression_findings: true
+    - id: micro-hw-6.2.0-vs-main
+      candidate: *v6-2-0
+      baseline: *main-4c1088949
+      mode: nightly
+      expect:
+        verdict: regression
+        findings:
+          - {name_regex: '^UNWIND index MATCH edge 1 row( \[(reads|writes)\])?$', metric: cycles, status: regression}
+          - {name_regex: '^UNWIND id MATCH edge 1 row( \[(reads|writes)\])?$', metric: cycles, status: regression}
+          - {name_regex: '^UNWIND id MATCH edge 100 rows( \[(reads|writes)\])?$', metric: cycles, status: regression}
+          - {name_regex: '^correlated hash join( \[(reads|writes)\])?$', metric: alloc_bytes, status: regression}
+      judge: >-
+        Three of the four rows #3963 added (bench/src/falkorbench/queries.py)
+        regress on cycles, and correlated hash join on allocated bytes, each
+        confirmed by a re-run. The fourth #3963 row, UNWIND index MATCH edge
+        100 rows, is at parity at bench sizes (one hash join over the scan
+        costs about as much as 100 seeks): report its ratio, it is not
+        required. Report
+        the other allocation rows (the replay of run 45403484820 also flagged
+        id eq join and the three #3963 rows) and the branch/L2 miss rows as
+        measured. micro-hw names a finding "<row> [<class>]"; the patterns are
+        anchored so no other row matches.
+    - id: micro-hw-c-v4.22.4-a-a
+      candidate: *c-v4-22-4
+      baseline: *c-v4-22-4
+      mode: nightly
+      expect: {}
+      judge: >-
+        Hardware counters can measure the C engine (callgrind cannot). Only
+        a valid result.json is required; record its verdict and findings as
+        measured.
+
+  pokec:
+    - id: pokec-a-a
+      candidate: *main-4c1088949
+      baseline: *main-4c1088949
+      mode: nightly
+      expect:
+        verdict: pass
+        no_regression_findings: true
+    - id: pokec-c-v4.22.4-a-a
+      candidate: *c-v4-22-4
+      baseline: *c-v4-22-4
+      mode: nightly
+      expect:
+        verdict: pass
+        no_regression_findings: true
+      judge: The C engine against itself.
+    - id: pokec-6.0.4-vs-6.0.1
+      candidate: *v6-0-4
+      baseline: *v6-0-1
+      mode: nightly
+      expect:
+        verdict: regression
+        findings:
+          - {name_regex: 3-hop, status: regression}
+      judge: >-
+        The regression is the 3-hop read MATCH (s:User {id:$id})-->()-->()-->(n:User)
+        WHERE n.age >= 18 RETURN DISTINCT n.id: it does not finish (metric
+        completed, candidate 0) or the server stops answering PING (seconds,
+        not milliseconds) under 5% writes; confirmed: true.
+
+  # soak runs one check per scenario, soak-s01 ... soak-s12 (bench/checks.yaml).
+  soak-s01:
+    - {id: soak-s01-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s02:
+    - {id: soak-s02-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s03:
+    - {id: soak-s03-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s04:
+    - {id: soak-s04-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s05:
+    - {id: soak-s05-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s06:
+    - {id: soak-s06-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s07:
+    - {id: soak-s07-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s08:
+    - {id: soak-s08-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s09:
+    - {id: soak-s09-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s10:
+    - id: soak-s10-a-a
+      candidate: *main-4c1088949
+      baseline: *main-4c1088949
+      mode: nightly
+      expect: {regressions_only_known_breaks: true}
+      judge: >-
+        s10's known flaky checks (#3095, #3512) can break on main against itself:
+        red under contract v1.14, named with its issue and `introduced: false`
+        (the release gate leaves it out). The flake fired; the pair holds.
+  soak-s11:
+    - {id: soak-s11-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+  soak-s12:
+    - {id: soak-s12-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {regressions_only_known_breaks: true}}
+    - id: soak-s12-6.2.0-vs-6.0.4
+      candidate: *v6-2-0
+      baseline: *v6-0-4
+      mode: nightly
+      expect:
+        findings:
+          - {name_regex: s12, status: improvement}
+        no_regression_findings_matching: s12
+      judge: >-
+        Gated improvements on scenario s12 (IoT ingest); 6.0.4 lacks #2981
+        (Cartesian plan, inline-read break). perf-soak-port's dev-VM data
+        under the final gates: ingest_batch p50 0.093x (38.7 vs 417.1 ms) and
+        throughput 2.76x, ingest_single p50 0.23x, the 2m/30s queries p50
+        0.018-0.091x, retention_delete p50 0.028x, and the inline-read
+        invariant held on 6.2.0 and broke on 6.0.4. Amended 2026-11-24 from
+        "regression" (DECISIONS); the check was not changed to fit. p99 rows
+        are info. Any other finding is reported as measured.
+    - id: soak-s12-6.2.0-vs-6.2.1
+      candidate: *v6-2-0
+      baseline: *v6-2-1
+      mode: nightly
+      expect:
+        verdict: regression
+        findings:
+          - {name_regex: s12, status: regression}
+      judge: >-
+        6.2.1 adds main@4c1088949's five fixes to 6.2.0 (#3889, #3963 among
+        them), so 6.2.0's s12 ingest is the slower side. perf-soak-port's
+        dev-VM data under the final gates: exactly one regression,
+        s12 ingest_batch p50_ms 37.2 vs 7.8 ms (4.78x, +29.4 ms), crossing on
+        the first pass and on the swapped re-run (a throughput row with the
+        same name is ok: match on status). p99 rows are info.
+
+  fuzz:
+    - id: fuzz-a-a
+      candidate: *main-4c1088949
+      baseline: *main-4c1088949
+      mode: nightly
+      expect:
+        verdict: pass
+        no_regression_findings: true
+    - id: fuzz-6.2.0-vs-6.0.4
+      candidate: *v6-2-0
+      baseline: *v6-0-4
+      mode: nightly
+      expect:
+        verdict: regression
+        findings:
+          - {name_regex: build, status: regression}
+      judge: >-
+        The regression is in graph-build time (the edge phase: 7.9 s on
+        6.2.0 vs 1.3 s on 6.0.4 in the Nov 23 re-check).
+    - id: fuzz-control-a-a
+      candidate: *c-v4-22-2
+      baseline: *c-v4-22-2
+      mode: nightly
+      expect:
+        verdict: pass
+        no_regression_findings: true
+      judge: The control epoch on C compared with itself flags nothing.
+    - id: fuzz-control-c-v4.22.3-vs-c-v4.22.2
+      candidate: *c-v4-22-3
+      baseline: *c-v4-22-2
+      mode: nightly
+      expect:
+        verdict: regression
+        findings:
+          - {name_regex: control, status: regression}
+      judge: >-
+        The regression comes from the control epoch: reads time out behind
+        a waiting writer.
+
+  ldbc:
+    - id: ldbc-a-a
+      candidate: *main-4c1088949
+      baseline: *main-4c1088949
+      mode: nightly
+      expect:
+        verdict: pass
+        no_regression_findings: true
+    - id: ldbc-c-v4.22.4-a-a
+      candidate: *c-v4-22-4
+      baseline: *c-v4-22-4
+      mode: nightly
+      expect:
+        verdict: pass
+        no_regression_findings: true
+      judge: >-
+        The C engine against itself. Its 4 known gaps, IC1, IC10, IC13 and
+        IC14 (errors on every attempt on both sides in run 45390117925), are
+        info findings, never regressions.
+    - id: ldbc-6.0.4-vs-6.2.0
+      candidate: *v6-0-4
+      baseline: *v6-2-0
+      mode: nightly
+      expect:
+        verdict: regression
+        findings:
+          - {name_regex: '\bic1\b', metric: [p50_ms, p95_ms, p99_ms], status: regression}
+          - {name_regex: '\bic2\b', metric: [p50_ms, p95_ms, p99_ms], status: regression}
+          - {name_regex: '\bic12\b', status: regression}
+      judge: >-
+        Latency regressions on IC1 and IC2, confirmed by a re-run, and a
+        regression of any kind on IC12: its slow rows can exhaust the run's
+        deadline, and a re-run that does not re-time every row is
+        inconclusive for latency, while its `completed` regression stands
+        (perf-coord, 2026-11-24). Run 45390117925: IC1 p95 170x, IC2 p50 90x,
+        IC12 p95 288x on 18 re-run rows. IC3 is not part of the expectation:
+        it does not finish on either side. v6.0.4
+        (6ca3adc9d) lacks #3593 (98e05a415, the #2558 fix) and v6.2.0
+        contains it. The patterns are word-bounded so IC1 does not match
+        IC10-IC14. (Was "to verify"; amended 2026-11-24, DECISIONS.)

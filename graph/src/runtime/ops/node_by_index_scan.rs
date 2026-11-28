@@ -20,6 +20,7 @@
 //!             output rows with node IDs
 //! ```
 
+use arcstr::ArcStr;
 use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
@@ -41,13 +42,13 @@ use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 pub struct NodeByIndexScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    node_pattern: &'a QueryNode<Arc<String>, Variable>,
-    index: &'a Arc<String>,
+    node_pattern: &'a QueryNode<ArcStr, Variable>,
+    index: &'a ArcStr,
     query: &'a IndexQuery<QueryExpr<Variable>>,
     /// Additional labels (beyond the index's primary label) that must be
     /// verified post-hoc, since the index only filters on the primary. Computed
     /// once; folded into each row's iterator as a `filter`.
-    extra_labels: Option<Vec<Arc<String>>>,
+    extra_labels: Option<Vec<ArcStr>>,
     /// Holds the parent batch being expanded and the per-row node iterators, and
     /// performs the shared pack-and-gather emit.
     emitter: BatchedResultEmitter<'a, NodeId>,
@@ -58,8 +59,8 @@ impl<'a> NodeByIndexScanOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        node_pattern: &'a QueryNode<Arc<String>, Variable>,
-        index: &'a Arc<String>,
+        node_pattern: &'a QueryNode<ArcStr, Variable>,
+        index: &'a ArcStr,
         query: &'a IndexQuery<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
         // Kept in the signature, unused for now: see the emitter below.
@@ -395,8 +396,8 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
 mod tests {
     use super::*;
 
-    fn key() -> Arc<String> {
-        Arc::new("v".to_string())
+    fn key() -> ArcStr {
+        ArcStr::from("v")
     }
 
     fn in_list(values: &[Value]) -> IndexQuery<Value> {
@@ -427,10 +428,7 @@ mod tests {
         let lossy = Value::Int(9_007_199_254_740_993);
         let cases: [(&[Value], bool); 5] = [
             (&[Value::Int(1), Value::Float(2.5), Value::Bool(true)], true),
-            (
-                &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
-                true,
-            ),
+            (&[Value::Int(1), Value::String(ArcStr::from("a"))], true),
             (&[], false),
             (&[Value::Int(1), lossy.clone()], false),
             (&[lossy], false),

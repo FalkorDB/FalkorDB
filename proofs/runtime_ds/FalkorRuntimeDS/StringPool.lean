@@ -1,19 +1,24 @@
 /-
 # `StringPool` (`graph/src/runtime/string_pool.rs`): interning is injective and stable
 
-An `Arc<String>` is a pointer `Nat` into an allocation counter `next`
-(every `Arc::new` is a fresh pointer). The pool is the list of its
+A pooled `ArcStr` is a pointer `Nat` into an allocation counter `next`
+(every `ArcStr::from` of a non-empty string is a fresh allocation). The pool is the list of its
 `(content, ptr)` entries; `ext p` is the number of strong refs held *outside*
 the pool (`Arc::strong_count - 1`). All operations run under the `Mutex`, so
 they are modelled sequentially.
 
 | here | there |
 | --- | --- |
-| `Pool`        | `StringPool { inner: Mutex<HashSet<Arc<String>>> }` (string_pool.rs:13) |
-| `intern`      | `StringPool::intern` (string_pool.rs:28) — hit: clone existing; miss: `Arc::new((*a).clone())` |
-| `isInterned`  | `StringPool::is_interned` (string_pool.rs:42) — lookup by content, then `Arc::ptr_eq` |
-| `prune`       | the `retain(|k| Arc::strong_count(k) > 1)` in `StringPool::stats` (string_pool.rs:54) |
-| `release`     | dropping an external `Arc` |
+| `Pool`        | `StringPool { inner: Mutex<HashSet<ArcStr>> }` (string_pool.rs) |
+| `internArc`   | `StringPool::intern` (string_pool.rs) — a static `ArcStr` (since #3966) is returned unpooled, else `intern` |
+| `intern`      | `StringPool::intern` past its `is_static` return — hit: clone existing; miss: `ArcStr::from(a.as_str())` |
+| `isInternedArc` / `isInterned` | `StringPool::is_interned` (string_pool.rs) — lookup by content, then `ArcStr::ptr_eq` |
+| `prune`       | the `retain(|k| ArcStr::strong_count(k).is_some_and(|n| n > 1))` in `StringPool::stats` (string_pool.rs) |
+| `release`     | dropping an outside `ArcStr` |
+
+The only static `ArcStr` a query can hand `intern` is the empty string
+(`ArcStr::from("")` is arcstr's static `ArcStr::new()`; nothing builds a `literal!`
+value), so `internArc` takes "static" to mean `s = ""` and returns the handle `none`.
 -/
 namespace FalkorRuntimeDS.StringPoolModel
 
@@ -27,7 +32,7 @@ def lookup (es : List (String × Nat)) (s : String) : Option Nat :=
 
 def bump (f : Nat → Nat) (p : Nat) : Nat → Nat := fun q => if q = p then f q + 1 else f q
 
-/-- string_pool.rs:28 — returns the canonical pointer; the caller now holds one ref. -/
+/-- string_pool.rs — returns the canonical pointer; the caller now holds one ref. -/
 def intern (P : Pool) (s : String) : Pool × Nat :=
   match lookup P.entries s with
   | some p => ({ P with ext := bump P.ext p }, p)
@@ -35,10 +40,10 @@ def intern (P : Pool) (s : String) : Pool × Nat :=
     let p := P.next
     ({ entries := P.entries ++ [(s, p)], next := p + 1, ext := bump P.ext p }, p)
 
-/-- string_pool.rs:42 -/
+/-- string_pool.rs -/
 def isInterned (P : Pool) (p : Nat) (s : String) : Bool := lookup P.entries s == some p
 
-/-- string_pool.rs:54 -/
+/-- string_pool.rs -/
 def prune (P : Pool) : Pool := { P with entries := P.entries.filter (fun e => decide (P.ext e.2 > 0)) }
 
 def release (P : Pool) (p : Nat) : Pool := { P with ext := fun q => if q = p then P.ext q - 1 else P.ext q }
@@ -189,5 +194,83 @@ theorem reintern_fresh {P : Pool} (hP : WF P) (s : String) (h : lookup P.entries
     (intern P s).2 = P.next ∧ ∀ e ∈ P.entries, e.2 ≠ (intern P s).2 := by
   unfold intern; rw [h]
   exact ⟨rfl, fun e he => Nat.ne_of_lt (hP.alloc e he)⟩
+
+/-! ## The whole `intern` (#3966): the static empty string is never pooled -/
+
+/-- string_pool.rs `StringPool::intern`: `none` is the static `ArcStr` handed back
+as is (`ArcStr::is_static`), `some p` a pool pointer. -/
+def internArc (P : Pool) (s : String) : Pool × Option Nat :=
+  if s = "" then (P, none) else let r := intern P s; (r.1, some r.2)
+
+/-- string_pool.rs `StringPool::is_interned`: a static is never `ptr_eq` to a pool
+entry (every entry is a heap `ArcStr::from`). -/
+def isInternedArc (P : Pool) : Option Nat → String → Bool
+  | none, _ => false
+  | some p, s => isInterned P p s
+
+/-- Counterexample to `intern_isInterned` for the whole fn since #3966: interning the
+empty string does not return a pool entry, so `is_interned` is false for it (and
+`GRAPH.INFO ObjectPool` no longer counts it). -/
+theorem internArc_empty_not_interned (P : Pool) :
+    isInternedArc (internArc P "").1 (internArc P "").2 "" = false := by
+  simp [internArc, isInternedArc]
+
+/-- `intern_isInterned`'s statement, on the whole fn, is refuted (`s = ""`). -/
+theorem internArc_isInterned_fails :
+    ¬ ∀ (P : Pool), WF P → ∀ s, isInternedArc (internArc P s).1 (internArc P s).2 s = true := by
+  intro h
+  have := h _ wf_empty ""
+  rw [internArc_empty_not_interned] at this
+  exact Bool.false_ne_true this
+
+/-- Every non-empty string interns to its canonical pool entry, as before. -/
+theorem internArc_isInterned {P : Pool} (hP : WF P) {s : String} (hs : s ≠ "") :
+    isInternedArc (internArc P s).1 (internArc P s).2 s = true := by
+  simp only [internArc, hs, if_false, isInternedArc]
+  exact intern_isInterned hP s
+
+theorem wf_internArc {P : Pool} (hP : WF P) (s : String) : WF (internArc P s).1 := by
+  unfold internArc; split
+  · exact hP
+  · exact wf_intern hP s
+
+/-- Interning the same content twice returns the same handle. -/
+theorem internArc_idem (P : Pool) (s : String) :
+    (internArc (internArc P s).1 s).2 = (internArc P s).2 := by
+  unfold internArc; split
+  · simp_all
+  · simp only [*, if_false]; rw [intern_idem]
+
+/-- Injective: two contents get the same handle only if they are equal. -/
+theorem internArc_injective {P : Pool} (hP : WF P) (s t : String) :
+    let r1 := internArc P s
+    let r2 := internArc r1.1 t
+    r2.2 = r1.2 → t = s := by
+  intro r1 r2 heq
+  simp only [r1, r2, internArc] at heq
+  by_cases hs : s = "" <;> by_cases ht : t = ""
+  · rw [hs, ht]
+  · simp [hs, ht] at heq
+  · simp [hs, ht] at heq
+  · simp only [hs, ht, if_false, Option.some.injEq] at heq
+    exact intern_injective hP s t heq
+
+/-- The pool never holds the empty string: `intern` keeps it out, `prune` only drops. -/
+def NoEmpty (P : Pool) : Prop := ∀ e ∈ P.entries, e.1 ≠ ""
+
+theorem noEmpty_internArc {P : Pool} (h : NoEmpty P) (s : String) : NoEmpty (internArc P s).1 := by
+  unfold internArc; split
+  · exact h
+  · rename_i hs
+    intro e he
+    simp only [intern] at he
+    split at he
+    · exact h e he
+    · rcases List.mem_append.mp he with he | he
+      · exact h e he
+      · simp at he; subst he; exact hs
+
+theorem noEmpty_prune {P : Pool} (h : NoEmpty P) : NoEmpty (prune P) :=
+  fun e he => h e (List.mem_filter.mp he).1
 
 end FalkorRuntimeDS.StringPoolModel

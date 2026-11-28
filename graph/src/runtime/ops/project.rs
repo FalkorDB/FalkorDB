@@ -69,19 +69,38 @@ impl<'a> ProjectOp<'a> {
             columns.push(eval.eval_values(&tree.root(), batch, &active)?);
         }
 
-        // Fast path: every projection bulk-materialized into a column and there
-        // are no carry-forward variables, so move the columns straight into the
-        // output batch. This skips the per-row `Row` allocation and the
-        // column -> Row -> column double-clone the general path below incurs (the
-        // dominant `ProjectOp` cost on row-heavy projections such as `RETURN n`
-        // or `RETURN n.id`). Parity-exact: `set_column` applies the same
-        // `classify_stored_column` that `BatchBuilder::finish` would over the
-        // same materialized values and binds the slot identically, and origins
-        // are carried over per active row exactly as the row path does.
-        if !active.is_empty() && !self.trees.is_empty() && self.copy_from_parent.is_empty() {
-            let mut out = Batch::new(0);
+        // Fast path: move the projected columns straight into the output batch
+        // and gather each carry-forward variable as a whole column. This skips
+        // the per-row `Row` allocation and the column -> Row -> column
+        // double-clone the general path below incurs (the dominant `ProjectOp`
+        // cost on row-heavy projections such as `RETURN n`, `RETURN n.id`, or
+        // a `RETURN n.id ORDER BY n.age` that carries `n` to the sort).
+        //
+        // Parity-exact: `set_column` applies the same `classify_stored_column`
+        // that `BatchBuilder::finish` would over the same materialized values
+        // and binds the slot identically, and origins are carried over per
+        // active row exactly as the row path does. Binding is per column, so
+        // the row path's per-row cases collapse to per-column ones: a bound
+        // parent column is copied whole (its nulls stay bound nulls) and an
+        // unbound one stays unbound. A value-present-but-unbound parent slot
+        // binds only its non-null rows on the row path, which a column cannot
+        // express, so that rare shape keeps the row path.
+        if !active.is_empty()
+            && (!self.trees.is_empty() || !self.copy_from_parent.is_empty())
+            && self
+                .copy_from_parent
+                .iter()
+                .all(|(old_var, _)| !batch.is_value_only(old_var.id))
+        {
+            let mut out = Batch::rows_only(active.len());
             for ((target, _tree), col) in self.trees.iter().zip(columns) {
                 out.set_column(target.id, Column::Values(col));
+            }
+            for (old_var, new_var) in self.copy_from_parent {
+                let col = batch.column(old_var.id);
+                if !matches!(col, Column::Unbound) {
+                    out.set_column(new_var.id, col.gather(active.iter().copied()));
+                }
             }
             let origins: Vec<u32> = active.iter().map(|&row| batch.origin_row(row)).collect();
             if origins.iter().any(|&o| o != 0) {

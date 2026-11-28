@@ -32,14 +32,14 @@ use crate::runtime::{
     runtime::Runtime,
     value::{DeletedNode, DeletedRelationship, Value},
 };
+use arcstr::ArcStr;
 use orx_tree::{Dyn, DynTree, NodeIdx, NodeRef};
 use std::collections::HashSet;
-use std::sync::Arc;
 
 fn node_attrs_to_map(
     g: &Graph,
     attrs: Vec<(u16, Value)>,
-) -> OrderMap<Arc<String>, Value> {
+) -> OrderMap<ArcStr, Value> {
     OrderMap::from_unique_keys(
         attrs
             .into_iter()
@@ -50,7 +50,7 @@ fn node_attrs_to_map(
 fn rel_attrs_to_map(
     g: &Graph,
     attrs: Vec<(u16, Value)>,
-) -> OrderMap<Arc<String>, Value> {
+) -> OrderMap<ArcStr, Value> {
     OrderMap::from_unique_keys(
         attrs
             .into_iter()
@@ -363,32 +363,11 @@ impl Runtime<'_> {
 
             if snapshot {
                 // Need snapshot for later clauses to reference deleted relationship data.
-                // Build edge_id -> type_id mapping using a single type matrix scan
-                // instead of N individual GraphBLAS iterators.
-                let edge_set: rustc_hash::FxHashSet<u64> =
-                    committed.iter().map(|r| u64::from(*r)).collect();
-                let mut edge_type_map: rustc_hash::FxHashMap<u64, usize> =
-                    rustc_hash::FxHashMap::with_capacity_and_hasher(
-                        committed.len(),
-                        rustc_hash::FxBuildHasher,
-                    );
                 let g = self.graph();
-                let min_id = committed.iter().map(|r| u64::from(*r)).min().unwrap();
-                let max_id = committed.iter().map(|r| u64::from(*r)).max().unwrap();
-                #[allow(clippy::cast_possible_truncation)]
-                for (row, col) in g.relationship_type_matrix_iter(min_id, max_id) {
-                    if edge_set.contains(&row) {
-                        edge_type_map.insert(row, col as usize);
-                    }
-                }
-
                 let mut deleted_rels = self.deleted_relationships.borrow_mut();
                 for &rel_id in &committed {
-                    let type_idx = edge_type_map
-                        .get(&u64::from(rel_id))
-                        .expect("relationship must have a type");
                     let type_name = g
-                        .get_type(crate::graph::graph::TypeId(*type_idx))
+                        .get_type(g.get_relationship_type_id(rel_id))
                         .expect("type must exist");
                     let mut actual = crate::runtime::ordermap::OrderMap::from_unique_keys(
                         g.get_relationship_all_attrs(rel_id),

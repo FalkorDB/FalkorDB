@@ -24,6 +24,7 @@
 //!              output batch (with new IDs bound)
 //! ```
 
+use arcstr::ArcStr;
 use std::cell::OnceCell;
 use std::sync::Arc;
 
@@ -54,7 +55,7 @@ type AttrTemplate<'t> = Vec<(u16, usize, ExprNode<'t>)>;
 /// evaluation.
 fn build_attr_template<'t>(
     attrs: &'t DynTree<ExprIR<Variable>>,
-    mut resolve: impl FnMut(&Arc<String>) -> u16,
+    mut resolve: impl FnMut(&ArcStr) -> u16,
 ) -> Option<AttrTemplate<'t>> {
     let root = attrs.root();
     if !matches!(root.data(), ExprIR::Map) {
@@ -82,8 +83,8 @@ fn build_attr_template<'t>(
 }
 
 fn resolve_map_attrs(
-    map: OrderMap<Arc<String>, Value>,
-    mut resolve: impl FnMut(&Arc<String>) -> u16,
+    map: OrderMap<ArcStr, Value>,
+    mut resolve: impl FnMut(&ArcStr) -> u16,
 ) -> Vec<(u16, Value)> {
     let mut out: Vec<(u16, Value)> = map.into_iter().map(|(k, v)| (resolve(&k), v)).collect();
     out.sort_unstable_by_key(|(k, _)| *k);
@@ -93,8 +94,8 @@ fn resolve_map_attrs(
 pub struct CreateOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pattern: QueryGraph<Arc<String>, Arc<String>, Variable>,
-    resolved_pattern: OnceCell<QueryGraph<Arc<String>, LabelId, Variable>>,
+    pattern: QueryGraph<ArcStr, ArcStr, Variable>,
+    resolved_pattern: OnceCell<QueryGraph<ArcStr, LabelId, Variable>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -102,7 +103,7 @@ impl<'a> CreateOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        pattern: &QueryGraph<ArcStr, ArcStr, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -138,7 +139,7 @@ impl<'a> Iterator for CreateOp<'a> {
 impl Runtime<'_> {
     pub fn create_batch(
         &self,
-        pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
+        pattern: &QueryGraph<ArcStr, LabelId, Variable>,
         batch: &mut Batch<'_>,
     ) -> Result<(), String> {
         // Track which aliases are created in this pattern for validation skip
@@ -194,8 +195,7 @@ impl Runtime<'_> {
                 None => {
                     let root = node.attrs.root();
                     let eval = ExprEval::from_runtime(self);
-                    let mut maps: Vec<OrderMap<Arc<String>, Value>> =
-                        Vec::with_capacity(active_len);
+                    let mut maps: Vec<OrderMap<ArcStr, Value>> = Vec::with_capacity(active_len);
                     for row in batch.active_indices() {
                         let env = BatchRow::new(batch, row);
                         let attrs = eval.eval_node(&root, Some(&env), None)?;
@@ -317,7 +317,7 @@ impl Runtime<'_> {
                 None => {
                     let root = rel.attrs.root();
                     let eval = ExprEval::from_runtime(self);
-                    let mut maps: Vec<OrderMap<Arc<String>, Value>> = Vec::with_capacity(ids.len());
+                    let mut maps: Vec<OrderMap<ArcStr, Value>> = Vec::with_capacity(ids.len());
                     for row in batch.active_indices() {
                         let env = BatchRow::new(batch, row);
                         let attrs = eval.eval_node(&root, Some(&env), None)?;
@@ -352,8 +352,8 @@ impl Runtime<'_> {
 
     pub fn resolve_pattern(
         &self,
-        pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
-    ) -> QueryGraph<Arc<String>, LabelId, Variable> {
+        pattern: &QueryGraph<ArcStr, ArcStr, Variable>,
+    ) -> QueryGraph<ArcStr, LabelId, Variable> {
         let mut resolved_pattern = QueryGraph::default();
         for node in pattern.nodes() {
             resolved_pattern.add_node(Arc::new(QueryNode::new(

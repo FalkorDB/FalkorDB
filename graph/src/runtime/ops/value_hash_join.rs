@@ -514,6 +514,7 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
 
 #[cfg(test)]
 mod tests {
+    use arcstr::ArcStr;
     use std::sync::Arc;
 
     use super::RightRowRef;
@@ -528,13 +529,13 @@ mod tests {
         Value::Map(Arc::new(OrderMap::from_vec(
             entries
                 .into_iter()
-                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .map(|(k, v)| (ArcStr::from(k), v))
                 .collect(),
         )))
     }
 
     fn string(s: &str) -> Value {
-        Value::String(Arc::new(s.to_string()))
+        Value::String(ArcStr::from(s))
     }
 
     #[test]

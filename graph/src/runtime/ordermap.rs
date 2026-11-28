@@ -12,6 +12,7 @@
 //! Uses a `ThinVec<(K, V)>` internally with O(n) lookup. This is efficient
 //! for small maps (typical property counts) while preserving order.
 
+use arcstr::ArcStr;
 use std::{borrow::Borrow, hash::Hash, ops::Index};
 
 use itertools::Itertools;
@@ -143,9 +144,9 @@ impl<K: PartialEq, V> OrderMap<K, V> {
     }
 }
 
-// Specialized implementation for Arc<String> keys
-// Allows lookup with &str, &String, or &Arc<String> - zero allocations!
-impl<V> OrderMap<std::sync::Arc<String>, V> {
+// Specialized implementation for ArcStr keys
+// Allows lookup with &str, &String, or &ArcStr - zero allocations!
+impl<V> OrderMap<ArcStr, V> {
     pub fn get_str<Q>(
         &self,
         key: &Q,
@@ -155,7 +156,7 @@ impl<V> OrderMap<std::sync::Arc<String>, V> {
     {
         let key_str = key.as_ref();
         for (k, v) in &self.vec {
-            if k.as_ref() == key_str {
+            if k.as_str() == key_str {
                 return Some(v);
             }
         }

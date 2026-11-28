@@ -8,16 +8,15 @@ graph/src/effects/writer.rs	EffectWrite::f64	75	PROVEN	w64 of the bit pattern: i
 graph/src/effects/writer.rs	EffectWrite::string	154	PROVEN	wString: rString_wString
 graph/src/effects/reader.rs	Reader::take	40	PROVEN	take: take_append', take_consumes, take_noPanic
 graph/src/effects/reader.rs	Reader::guard_count	70	PROVEN	guardCount: guardCount_bound, guardCount_noPanic, guardCount_consumes
-graph/src/effects/reader.rs	Reader::u8	99	PROVEN	rdU 1: u8_w8, rdU_noPanic
 graph/src/effects/reader.rs	Reader::u16	103	PROVEN	rdU 2: u16_w16, rdU_noPanic
 graph/src/effects/reader.rs	Reader::u32	107	PROVEN	rdU 4: u32_w32, rdU_noPanic
 graph/src/effects/reader.rs	Reader::u64	111	PROVEN	rdU 8: u64_w64, rdU_noPanic
 graph/src/effects/reader.rs	Reader::i64	115	PROVEN	i64: i64_w64, i64_noPanic
 graph/src/effects/reader.rs	Reader::f32	119	PROVEN	f32 (bit pattern): f32_w32, f32_noPanic
 graph/src/effects/reader.rs	Reader::string	161	PROVEN	rString: rString_wString, rString_noPanic, rString_consumes
-graph/src/effects/v3/value.rs	EffectEncode::encode	34	PROVEN	encV/encL: decodeV_encV, encV_total, encV_len (Map arm = panic modelled as error)
-graph/src/effects/v3/value.rs	EffectDecode::decode	168	PROVEN	decodeV/loop/deliver (#3267: owed counter, owedOf invariant): decodeV_encV, decodeV_safe (no panic incl. owed -= 1, consumes, fuel enough), capTrace_linear/decode_reserves_linear (reservations <= remaining/4), hostile_refused_second_level, nest_decodes
-graph/src/effects/v3/value.rs	read_one	212	PROVEN	readOne/readBody (#3267: guard_count(n + owed)): readOne_scalar, readOne_list (honest bytes pass the whole-stack guard), good_readOne, readOne_progress, readOne_opened_bound (4(n+owed) <= remaining)
+graph/src/effects/v3/value.rs	EffectEncode::encode	35	PROVEN	encV/encL: decodeV_encV, encV_total, encV_len (Map arm = panic modelled as error)
+graph/src/effects/v3/value.rs	EffectDecode::decode	169	PROVEN	decodeV/loop/deliver (#3267: owed counter, owedOf invariant): decodeV_encV, decodeV_safe (no panic incl. owed -= 1, consumes, fuel enough), capTrace_linear/decode_reserves_linear (reservations <= remaining/4), hostile_refused_second_level, nest_decodes
+graph/src/effects/v3/value.rs	read_one	213	PROVEN	readOne/readBody (#3267: guard_count(n + owed)): readOne_scalar, readOne_list (honest bytes pass the whole-stack guard), good_readOne, readOne_progress, readOne_opened_bound (4(n+owed) <= remaining)
 graph/src/effects/v3/blocks.rs	LabelSet::encode	55	PROVEN	wLabelSet: encRec_createNode, readRec_createNode
 graph/src/effects/v3/blocks.rs	LabelSet::decode	77	PROVEN	rLabelSet: readN_u32, readRec_createNode
 graph/src/effects/v3/blocks.rs	AttrIds::encode	101	PROVEN	wAttrIds: encRec_createNode, readRec_createNode
@@ -43,8 +42,8 @@ graph/src/effects/v3/records.rs	write_constraint_tail	891	PROVEN	RecFull.bodyCon
 graph/src/effects/v3/records.rs	Record::encode	925	PROVEN	RecFull.encRecord: readRecord_encRecord, readRecord_encRecord_wf (no shape hypothesis since #2916), encRecord_ok_shape, encRecord_rowShape_refused, encRecord_empty_refused/never_ok; Records.encRec_refuses_shape
 graph/src/effects/v3/records.rs	Record::decode	1194	PROVEN	= readRecord: readRecord_encRecord
 graph/src/effects/v3/records.rs	Payload::deref	1219	PROVEN	Payload.openPayload result bytes: openPayload_plain, openPayload_maybeCompress
-graph/src/effects/v3/records.rs	Payload::records	1227	CONDITIONAL	Payload.readAllRecords from the start: records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
-graph/src/effects/v3/records.rs	Records::next	1250	CONDITIONAL	Payload.readAllRecords (stop at end, fuse on error): records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
+graph/src/effects/v3/records.rs	Payload::records	1227	PROVEN	Payload.readAllRecords from the start: records_concat; IdLink.records_concat_idList: `records_concat` at `idListCodec` (the IdCodec built from proofs/id_list's encodeIds/readIds; roundtrip = readIds_encodeIds, good = readIds_never_panics + readIds_safe; assumes only `RoaringOK`, the roaring crate's serialize/deserialize contract, as in proofs/id_list)
+graph/src/effects/v3/records.rs	Records::next	1250	PROVEN	Payload.readAllRecords (stop at end, fuse on error): records_concat; IdLink.records_concat_idList: `records_concat` at `idListCodec` (the IdCodec built from proofs/id_list's encodeIds/readIds; roundtrip = readIds_encodeIds, good = readIds_never_panics + readIds_safe; assumes only `RoaringOK`, the roaring crate's serialize/deserialize contract, as in proofs/id_list)
 graph/src/effects/v3/records.rs	open_payload	1269	PROVEN	Payload.openPayload: openPayload_plain, openPayload_maybeCompress (zstd/crc as CodecOK hypothesis)
 graph/src/effects/v3/records.rs	maybe_compress	1369	PROVEN	Payload.maybeCompress (#3278: u32::try_from guard, frame_prefix): openPayload_maybeCompress (transparent for records of any length), maybeCompress_shrinks, seal_disabled
 graph/src/effects/v3/records.rs	frame_prefix	1419	PROVEN	Payload.framePrefix: framePrefix_some, framePrefix_none (a length >= 2^32 is refused, not truncated), framePrefix_length; used by openPayload_maybeCompress
@@ -65,35 +64,8 @@ graph/src/effects/reader.rs	Reader::take_array	93	PROVEN	Cursor.Rd.takeArray = t
 graph/src/effects/reader.rs	Reader::f64	123	PROVEN	Cursor.Rd.f64 (bit transmute): Rd.bits_refines
 graph/src/effects/reader.rs	Reader::take_n	138	PROVEN	Cursor.Rd.takeN (one slice + chunks_exact): Rd.takeN_refines (= per-element reads), readN_take_chunks
 graph/src/effects/v3/format.rs	EffectsPayload::new_buffer	20	PROVEN	Format.fmtNewBuffer: fmtIsEmpty_iff, ebNew_eq
-graph/src/effects/v3/format.rs	EffectsPayload::is_empty	25	PROVEN	Format.fmtIsEmpty: fmtIsEmpty_iff
-graph/src/effects/v3/format.rs	EffectsPayload::replicate	30	PROVEN	Format.fmtReplicate (seal then sink): fmtReplicate_transparent
 graph/src/effects/v3/format.rs	EffectsPayload::describe	44	PROVEN	Format.describe/describeLoop: describe_spec, describeLoop_spec
-graph/src/effects/v3/format.rs	EffectsPayload::apply	106	PROVEN	Format.fmtApply delegates to apply_effects (proofs/effects_emit_apply): fmtApply_eq
 graph/src/effects/v3/format.rs	EffectsPayload::build	113	PROVEN	Format.build/buildLoop: build_ok, buildLoop_after_fail
-graph/src/effects/v3/format.rs	EffectsPayload::build_index	142	PROVEN	Format.fmtBuildIndex delegates to build_index_buffer: fmtBuildIndex_eq
-graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	152	PROVEN	Format.fmtBuildConstraint delegates: fmtBuildConstraint_eq
-graph/src/effects/v3/staging.rs	label_set	23	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_created_node	29	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_updated_node	37	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_updated_edge	44	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_label_change	51	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_deleted_edges	58	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_deleted_node	64	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_created_node	72	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_updated_node	88	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_updated_edge	97	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_label_change	106	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_deleted_edges	114	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/staging.rs	stage_deleted_node	121	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	graph	36	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	graph_cell	42	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	with_attrs	47	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	with_edge	59	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	live_node	71	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	digest	102	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	encode_all	113	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	round_trip	122	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	read_buffer	142	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
 graph/src/effects/v3/mod.rs	compression_min_bytes	108	PROVEN	Format.compressionMinBytes: compressionMinBytes_neg, seal_disabled
 graph/src/effects/v3/mod.rs	seal	122	PROVEN	ModRs.sealBuf: seal_transparent
 graph/src/effects/v3/mod.rs	Opcode::is_batchable	182	PROVEN	RecFull.isBatchable: isBatchable_spec

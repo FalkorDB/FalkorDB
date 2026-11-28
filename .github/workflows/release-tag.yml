@@ -264,6 +264,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.guard.outputs.commit_sha }}
+          persist-credentials: false
+
       - name: Download all artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -290,6 +295,21 @@ jobs:
           if [ -n "$MISSING" ]; then
             echo "::error::missing expected release assets:$MISSING"; exit 1
           fi
+          if [[ -f LICENSE-SSPL && -f LICENSE-AGPL ]]; then
+            cp LICENSE LICENSE-SSPL LICENSE-AGPL dist/
+          elif [[ ! -e LICENSE-SSPL && ! -L LICENSE-SSPL &&
+                  ! -e LICENSE-AGPL && ! -L LICENSE-AGPL ]] \
+            && grep -qx ' *Server Side Public License' LICENSE; then
+            # A workflow_dispatch may re-release a tag from before dual licensing.
+            # Publish only the SSPL terms from the historical combined file.
+            if ! grep -qx ' *END OF TERMS AND CONDITIONS' LICENSE; then
+              echo "::error::historical SSPL license has no end marker"; exit 1
+            fi
+            sed '/^ *END OF TERMS AND CONDITIONS$/q' LICENSE > dist/LICENSE
+            echo "Publishing the historical SSPL license."
+          else
+            echo "::error::tagged tree has an incomplete license set"; exit 1
+          fi
           ( cd dist && sha256sum falkordb-*.so > SHA256SUMS )
           echo "Publishing:"; ls -1 dist
 
@@ -302,6 +322,7 @@ jobs:
           set -euo pipefail
           gh release upload "$TAG" \
             dist/falkordb-*.so dist/falkordb-*.so.sha256 dist/SHA256SUMS \
+            dist/LICENSE* \
             --clobber
 
   # Runtime images: retag the multi-arch manifests the merge queue built and

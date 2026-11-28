@@ -1,86 +1,9 @@
 /-
-# The edge-endpoint index answers exactly what the edge set says
+# The edge-endpoint index (`graph/src/graph/endpoint_index.rs`)
 
-A model of `EndpointIndex` (`graph/src/graph/endpoint_index.rs`), the graph-wide
-reverse index `edge_id -> (src, dst)` that every materialised relationship reads,
-and a machine-checked proof that after **any** sequence of `set` / `clear` /
-`prepare` calls — interleaved with the tier promotions they trigger — `get`
-returns precisely what a flat map `Nat → Option (src, dst)` would.
-
-## What it indexes
-
-Edge id → `(src, dst)`. Not node → incident edges, and not the type: the type
-lives in `relationship_type_matrix`, the incidence in the per-type tensors. The
-index holds one slot per edge id ever reserved; a deleted edge is a tombstone
-(both fields = the width's `EMPTY`), and nothing ever shrinks, so there is no
-swap-remove or compaction to get wrong. The only structural rewrite is
-*promotion*: re-encoding a narrow tier into a wider one when a reused id's new
-endpoints no longer fit.
-
-## What is modelled, and where it lives in the tree
-
-| here | there (`graph/src/graph/endpoint_index.rs` unless noted) |
-| --- | --- |
-| `bits`, `EMPTY`, `putF`         | `impl Endpoint for u16 / U24 / u32 / u64` (:81-124) — `put` truncates (`v as u16`, 3 LE bytes, ...) |
-| `decode`                        | `get`'s `if s.vacant() && d.vacant() { None }` (:468) |
-| `rankFor`                       | `EndpointIndex::rank_for` (:391) |
-| `Ix` (`w16 w24 w32 w64`)        | `struct EndpointIndex` (:326); a `Paged<T>` is modelled as its flat slot list (see `Paged` section for the paging lemma) |
-| `Ix.tier`, `Ix.setTier`         | the `match rank { 0 => w16, ..., _ => w64 }` arms of `tier_len` / `with_tier` (:537, :549) |
-| `Ix.withTier`                   | `with_tier` (:549): `get_or_insert_with(Arc::default)` + `Arc::make_mut` + `f` |
-| `growTo`, `putAt`, `vacate`     | `TierOps for Paged<T>`: `grow_to` (:732), `put` (:741), `vacate` (:750) |
-| `Ix.appendRank`                 | `append_rank` (:402) |
-| `Ix.len`, `Ix.tierLen`          | `len` (:412), `tier_len` (:537) |
-| `Ix.get` / `walk`               | `get` (:459) — the `each_tier!` walk subtracting tier lengths |
-| `Ix.locate` / `locAux`          | `locate` (:626) |
-| `widen`, `Ix.promote`           | `promote` (:336) — `from.take()`, empty early-return, re-emitted sentinel |
-| `Ix.ensure`                     | `get_or_insert_with(Arc::default)` inside `raise_to` |
-| `Ix.raiseTo`                    | `raise_to` (:486) |
-| `Ix.set`                        | `set` (:642) — the three `match self.locate(slot)` arms |
-| `Ix.clear`                      | `clear` (:692) |
-| `Ix.prepare`                    | `prepare` (:520) — `reserve_exact` has no semantic effect and is dropped |
-| `Ix.prepareTiers`, `clampStarts` | `prepare_tiers` (:605), its clamp (:610-614, #2905) |
-| `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs:2694`; `prepare` at `:2765`, then `set` per edge), `delete_relationships` (`graph.rs:2953`) and `delete_implicit_edges` (`graph.rs:3088`) via `clear_edge_endpoint` (`graph.rs:3448`), `Graph::restore` (`graph.rs:927`; `prepare_tiers` at `:985`, then `set`) |
-
-## What is proved (all without `sorry`; see `#print axioms` at the end)
-
-* `get_view` — `get` is lookup in the concatenation of the four decoded tiers.
-* `locate_some` / `locate_none` — `locate` names an in-range offset whose tier
-  prefix reconstructs the id, or the id is past the end.
-* `raise1..3`, `raiseTo_spec` — promotion never changes what any id reads
-  (tombstones and gaps included), keeps the width invariant, empties every tier
-  below the target (so it starts at id 0) and leaves the tiers above alone.
-* `view_set` — `set e s d` is "pad with absent slots to `e`, then overwrite `e`",
-  in all three arms (in place, reuse-with-promotion, append / new tier), and
-  preserves the invariant.
-* `view_clear`, `view_prepare`, `view_prepareTiers` — tombstoning, batch sizing
-  and the restore layout.
-* `get_set`, `get_clear`, `get_prepare` — the pointwise spec.
-* `run_refines` — **headline**: for any op sequence whose endpoints are 64-bit
-  and not both `u64::MAX`, `get` after the run equals the reference map.
-* `restore_agrees` — the restore path (`prepare_tiers` then `set` of every edge)
-  yields exactly the edge set, whatever tier boundaries it is given.
-* `clampStarts_mono`, `clampStarts_ordered` — #2905 (`1d15bf713`, origin/main this
-  project is checked against): `prepare_tiers` clamps its starts monotone, so no tier
-  size underflows; a no-op on restore's ordered starts.
-* `paged_at`, `ensurePages_spec` — `pages[i / P][i % P]` addresses the flat list
-  under the page-shape invariant, and `ensure_pages` keeps the shape, only
-  appends `EMPTY` slots and covers the requested length.
-* `mem_collect`, `collect_nodup`, `detach_delete_index` — `delete_implicit_edges`'
-  per-type collection is exactly "incident to a deleted node, not explicit",
-  never lists an id twice, and clearing it leaves no stale slot.
-* `u64_max_pair_reads_as_absent` — the one boundary where the spec needs its
-  hypothesis: an edge `(u64::MAX, u64::MAX)` reads back as deleted.
-
-## Companion: `EndpointPaged.lean`
-
-`Arc` sharing, page layout and page-level writes are proved there: `pageMut_spec`
-(a write through one version changes only its page `p`, no other live version, and keeps
-strong counts exact — the `Arc::get_mut`-or-copy of `page_mut`, and equally `make_mut`
-on a tier), `cloneV_spec`, `pushFresh_spec`, `replace_spec` (`regrow`), `fromSlots_spec`
-/ `promote_paged` (page layout of `from_slots`), `flatten_pagePut` / `put_spec` /
-`vacate_spec` / `growTo_spec` (the paged `TierOps` are the flat ones), `reserve_covers`,
-the memory accounting (`bytes_per_edge_bounds`), and `set_*_in_range` (every `put` the
-three `set` arms issue is in range, which the flat `List.set` does not check).
+Models `EndpointIndex` (edge id -> (src, dst), with tier promotion) and proves `get` agrees with a flat map after any
+sequence of `set` / `clear` / `prepare`. `EndpointPaged.lean` models pages and `Arc`s; `EndpointGraph.lean` the bulk `Graph` callers.
+See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
 -/
 
 set_option linter.unusedSimpArgs false
@@ -109,11 +32,11 @@ def EMPTY : Nat → Nat
 /-- `Endpoint::put` — a truncating cast to the width. -/
 def putF (r v : Nat) : Nat := v % 2 ^ bits r
 
-/-- The read side of `EndpointIndex::get` for one slot (:467-472). -/
+/-- The read side of `EndpointIndex::get` for one slot (:469-474). -/
 def decode (r : Nat) (p : Slot) : Option Slot :=
   if p.1 = EMPTY r ∧ p.2 = EMPTY r then none else some p
 
-/-- `EndpointIndex::rank_for` (:391): `0..u16::CEILING => 0`, ... -/
+/-- `EndpointIndex::rank_for` (:393): `0..u16::CEILING => 0`, ... -/
 def rankFor (v : Nat) : Nat :=
   if v < 65535 then 0
   else if v < 16777215 then 1
@@ -185,7 +108,7 @@ def locate (ix : Ix) (slot : Nat) : Option (Nat × Nat) := ix.locAux [0, 1, 2, 3
 
 end Ix
 
-/-- The slot re-encoding inside `promote` (:353-359). -/
+/-- The slot re-encoding inside `promote` (:355-361). -/
 def widen (a b : Nat) (p : Slot) : Slot :=
   if p.1 = EMPTY a ∧ p.2 = EMPTY a then (EMPTY b, EMPTY b) else (putF b p.1, putF b p.2)
 
@@ -233,7 +156,7 @@ def prepare (ix : Ix) (maxEdgeId maxEndpoint : Nat) : Ix :=
   let want := needed - below
   ix.withTier rank (growTo rank want)
 
-/-- The tier starts `prepare_tiers` uses (:610-614, #2905): clamped monotone,
+/-- The tier starts `prepare_tiers` uses (:612-616): clamped monotone,
 `s1 = starts[0].min(len)`, `s2 = starts[1].clamp(s1, len)`,
 `s3 = starts[2].clamp(s2, len)`. (`x.clamp(lo, hi)` with `lo ≤ hi` is
 `min (max x lo) hi`.) -/
@@ -253,7 +176,7 @@ def prepareTiers (ix : Ix) (s1 s2 s3 len : Nat) : Ix :=
     if rn.2 = 0 then ix else ix.withTier rn.1 (growTo rn.1 rn.2)
   [(0, s1), (1, s2 - s1), (2, s3 - s2), (3, len - s3)].foldl step ix
 
-/-- **#2905: the clamped starts are monotone and within `len`**, whatever the caller
+/-- **The clamped starts are monotone and within `len`**, whatever the caller
 passes, so none of `s2 - s1`, `s3 - s2`, `len - s3` underflows (each is the true
 `usize` difference) and the four tier sizes sum to exactly `len`. -/
 theorem clampStarts_mono (s1 s2 s3 len : Nat) :
@@ -263,7 +186,7 @@ theorem clampStarts_mono (s1 s2 s3 len : Nat) :
   simp only [clampStarts]; omega
 
 /-- Already-ordered starts (what `Graph::restore` passes, its own clamp: the
-"clamped monotone" loop at graph.rs:976-981) are left unchanged: the clamp is a no-op on the restore path. -/
+"clamped monotone" loop at graph.rs) are left unchanged: the clamp is a no-op on the restore path. -/
 theorem clampStarts_ordered {s1 s2 s3 len : Nat} (h : s1 ≤ s2 ∧ s2 ≤ s3 ∧ s3 ≤ len) :
     clampStarts s1 s2 s3 len = (s1, s2, s3) := by
   simp only [clampStarts, Prod.mk.injEq]; omega
@@ -372,7 +295,7 @@ theorem pre_length (ix : Ix) : ∀ r, (pre ix r).length + ix.tierLen r ≤ ix.le
     rw [(this r (by omega)).1, (this r (by omega)).2]
     simp [pre, Ix.len, tierLen_eq, Ix.tier]; omega
 
-/-- `locate` (:626): a hit names a tier `r ≤ 3`, an in-range offset, and that
+/-- `locate` (:631): a hit names a tier `r ≤ 3`, an in-range offset, and that
 offset plus the lengths below reconstructs the id; a miss means past the end. -/
 theorem locate_some (ix : Ix) {slot r at_ : Nat} (h : ix.locate slot = some (r, at_)) :
     r ≤ 3 ∧ at_ < ix.tierLen r ∧ slot = (pre ix r).length + at_ := by
@@ -526,7 +449,7 @@ theorem raise3 (w16 w24 w32 w64 : Option (List Slot)) :
     rcases w32 with _ | ⟨_ | ⟨c, l2⟩⟩ <;>
     simp [Ix.raiseTo, Ix.promote, Ix.ensure, Ix.setTier, Ix.tier]
 
-/-- `raise_to(n)` (:486), `n ∈ {1,2,3}`: every answer is unchanged (live pairs,
+/-- `raise_to(n)` (:488), `n ∈ {1,2,3}`: every answer is unchanged (live pairs,
 tombstones and gaps alike), the invariant holds, every tier below `n` is gone
 — so tier `n` now starts at edge id 0, which is why `set` may index it by the
 raw id — and every tier above `n` is untouched. -/
@@ -644,7 +567,7 @@ theorem tierOK_set {r : Nat} {v : List Slot} {i : Nat} {x : Slot}
 theorem tier_ok (ix : Ix) (hwf : WF ix) {r : Nat} (hr : r ≤ 3) : ∀ p ∈ (ix.tier r).getD [], ok r p :=
   hwf r hr
 
-/-- **`set` (:642), all three arms.** Reusing an id in place, reusing a low id
+/-- **`set` (:647), all three arms.** Reusing an id in place, reusing a low id
 whose new endpoints force a promotion, and appending past the end (into the
 widest active tier or a fresh wider one) all have the same observable effect:
 pad, then overwrite slot `e` with `(s, d)`. And the invariant survives. -/
@@ -731,7 +654,7 @@ theorem view_set (ix : Ix) (hwf : WF ix) (e s d : Nat) (hv : Valid s d) :
 
 /-! ## `clear`, `prepare`, `prepare_tiers` -/
 
-/-- `clear` (:692): an id inside some tier becomes a tombstone; an id past the
+/-- `clear` (:694): an id inside some tier becomes a tombstone; an id past the
 end is left alone (and already reads as absent). -/
 theorem view_clear (ix : Ix) (hwf : WF ix) (e : Nat) :
     (∀ i, lk (view (ix.clear e)) i = if i = e then none else lk (view ix) i) ∧
@@ -792,7 +715,7 @@ theorem view_grow (ix : Ix) (hwf : WF ix) {r : Nat} (hr : r ≤ 3) (n : Nat) :
     · exact tier_ok _ hwf hr p h
     · exact h ▸ ok_empty _
 
-/-- `prepare` (:520) only appends absent slots: it changes the cost of the
+/-- `prepare` (:522) only appends absent slots: it changes the cost of the
 batch that follows, never an answer. -/
 theorem view_prepare (ix : Ix) (hwf : WF ix) (m n : Nat) :
     (∃ k, view (ix.prepare m n) = view ix ++ List.replicate k none) ∧ WF (ix.prepare m n) := by
@@ -824,7 +747,7 @@ theorem allNone_grow (ix : Ix) (hwf : WF ix) {r : Nat} (hr : r ≤ 3) (n : Nat)
   · exact List.eq_of_mem_replicate hx
   · exact h x (by simp [hx])
 
-/-- `prepare_tiers` (:605), from an empty index as `Graph::restore` calls it:
+/-- `prepare_tiers` (:607), from an empty index as `Graph::restore` calls it:
 every slot it lays out reads as absent, whatever the boundaries. -/
 theorem view_prepareTiers (s1 s2 s3 len : Nat) :
     AllNone (view (({} : Ix).prepareTiers s1 s2 s3 len)) ∧
@@ -952,7 +875,7 @@ theorem snapshot_isolated (ops₁ ops₂ : List Op) (hv₁ : ∀ op ∈ ops₁, 
     snap.get i = refRun (fun _ => none) ops₁ i :=
   fresh_refines ops₁ hv₁ i
 
-/-- `Graph::restore` (`graph.rs:927`, `prepare_tiers` at `:985`): `prepare_tiers` with any boundaries,
+/-- `Graph::restore` (`graph.rs`, `prepare_tiers` ): `prepare_tiers` with any boundaries,
 then `set` for every edge of every tensor. The index answers exactly the
 restored edge set (the last `set` of an id wins, which cannot matter since a
 tensor holds each edge id once). -/
@@ -971,8 +894,8 @@ theorem restore_agrees (s1 s2 s3 len : Nat) (edges : List (Nat × Nat × Nat))
 
 The model above treats a tier as its flat slot list. That is sound because of
 the two facts here: with every page but the last full (`Shape`),
-`pages[i / P][i % P]` (`Paged::at`, :192) is the `i`-th slot of the
-concatenation; and `ensure_pages` (:256) -- the only thing that adds pages --
+`pages[i / P][i % P]` (`Paged::at`, :194) is the `i`-th slot of the
+concatenation; and `ensure_pages` (:258) -- the only thing that adds pages --
 keeps `Shape`, only appends `EMPTY` slots, and covers the requested length. So
 `grow_to` is exactly the flat `growTo`, including the slack a doubling tail
 leaves past `len`, which is still `EMPTY` when a later `grow_to` exposes it. -/
@@ -1019,7 +942,7 @@ def regrow {α} (fill : α) (page : List α) (n : Nat) : List α :=
   let held := min page.length n
   page.take held ++ List.replicate (n - held) fill
 
-/-- `Paged::ensure_pages` (:256), for a page size `P` (`P` in the engine). -/
+/-- `Paged::ensure_pages` (:258), for a page size `P` (`P` in the engine). -/
 def ensurePages {α} (P : Nat) (fill : α) (pages : List (List α)) (slots : Nat) : List (List α) :=
   if slots = 0 then pages else
   let want := (slots + P - 1) / P
@@ -1143,7 +1066,7 @@ theorem ensurePages_spec {α} (P : Nat) (hP : 0 < P) (fill : α) (pages : List (
 
 /-! ## Detach-delete: which edges `delete_implicit_edges` clears
 
-`Graph::delete_implicit_edges` (`graph.rs:3088`) builds, per relationship
+`Graph::delete_implicit_edges` (`graph.rs`) builds, per relationship
 type, the list of edges to remove for a set `N` of deleted nodes: for each
 `n ∈ N`, the outgoing edges of `n`, then the incoming edges of `n` whose source
 is neither `n` (a self-loop, already seen outgoing) nor another deleted node
@@ -1284,6 +1207,237 @@ theorem u64_max_one_side_is_live :
 #print axioms detach_delete_index
 #print axioms paged_at
 #print axioms ensurePages_spec
+
+/-! ## The type column (#3967)
+
+`EndpointIndex` also holds `types: Option<Arc<Paged<u16>>>`, `edge_id -> type id`, indexed
+by edge id directly (no tiers). It is independent of the endpoint tiers: `set` writes both,
+`clear` vacates both, `prepare` / `prepare_tiers` grow both. `TIx` is the whole index: the
+endpoint tiers `ix` (everything above) and the type column's flat slot list `types` (`None`
+is the empty list: `get_type` answers `None` for every id of either, and `allocated_bytes`
+of an empty `Paged` is 0). The paging of the column is the generic `Paged<S>` of
+`EndpointPaged` with `fill = NO_TYPE` (`Paged.growTypes_paged`). -/
+
+/-- `NO_TYPE = u16::MAX`, the type column's empty marker. -/
+def NO_TYPE : Nat := 65535
+/-- `MAX_TYPE_ID = u16::MAX - 1`: the largest storable type id. -/
+def MAX_TYPE_ID : Nat := 65534
+
+/-- `grow_types(len)`: `ensure_pages(len)`, `types.len = len`, only when `len` is larger. -/
+def growTypes (ts : List Nat) (n : Nat) : List Nat :=
+  if n > ts.length then ts ++ List.replicate (n - ts.length) NO_TYPE else ts
+
+/-- `get_type`: `None` past the end or on an empty slot (`NO_TYPE`). -/
+def getTypeT (ts : List Nat) (e : Nat) : Option Nat :=
+  match ts[e]? with
+  | some t => if t = NO_TYPE then none else some t
+  | none => none
+
+structure TIx where
+  ix : Ix := {}
+  types : List Nat := []
+
+namespace TIx
+
+/-- `EndpointIndex::get`: the endpoint tiers only. -/
+def get (x : TIx) (e : Nat) : Option Slot := x.ix.get e
+/-- `EndpointIndex::get_type`. -/
+def getType (x : TIx) (e : Nat) : Option Nat := getTypeT x.types e
+
+/-- `EndpointIndex::set(edge_id, src, dst, type_id)`: `grow_types(slot + 1)`, write the
+type at `slot`, then the endpoint arms (`Ix.set`). -/
+def set (x : TIx) (e s d t : Nat) : TIx :=
+  { ix := x.ix.set e s d, types := (growTypes x.types (e + 1)).set e t }
+
+/-- `EndpointIndex::clear`: vacate the endpoint slot, then `NO_TYPE` at `slot` if
+`slot < types.len()`. -/
+def clear (x : TIx) (e : Nat) : TIx :=
+  { ix := x.ix.clear e, types := if e < x.types.length then x.types.set e NO_TYPE else x.types }
+
+/-- `EndpointIndex::prepare`: the endpoint tier sizing, then `grow_types(needed)`,
+`needed = max_edge_id + 1`. -/
+def prepare (x : TIx) (m n : Nat) : TIx :=
+  { ix := x.ix.prepare m n, types := growTypes x.types (m + 1) }
+
+/-- `EndpointIndex::prepare_tiers`: the four tiers, then `grow_types(len)` if `len > 0`. -/
+def prepareTiers (x : TIx) (s1 s2 s3 len : Nat) : TIx :=
+  { ix := x.ix.prepareTiers s1 s2 s3 len, types := if len > 0 then growTypes x.types len else x.types }
+
+end TIx
+
+theorem getTypeT_growTypes (ts : List Nat) (n i : Nat) : getTypeT (growTypes ts n) i = getTypeT ts i := by
+  unfold growTypes; split
+  · unfold getTypeT
+    by_cases hi : i < ts.length
+    · rw [List.getElem?_append_left hi]
+    · rw [List.getElem?_append_right (by omega), List.getElem?_replicate,
+        List.getElem?_eq_none (by omega)]
+      by_cases h : i - ts.length < n - ts.length <;> simp [h]
+  · rfl
+
+theorem length_growTypes (ts : List Nat) (n : Nat) : n ≤ (growTypes ts n).length := by
+  unfold growTypes; split
+  · simp only [List.length_append, List.length_replicate]; omega
+  · omega
+
+/-- **`get_type` after `set`**: id `e` reads the type written (any type id below the empty
+marker, i.e. up to `MAX_TYPE_ID`), every other id is unchanged. -/
+theorem getType_set (x : TIx) (e s d t : Nat) (ht : t ≤ MAX_TYPE_ID) (i : Nat) :
+    (x.set e s d t).getType i = if i = e then some t else x.getType i := by
+  simp only [TIx.getType, TIx.set]
+  by_cases hi : i = e
+  · subst hi
+    have hl := length_growTypes x.types (i + 1)
+    have hlt : i < (growTypes x.types (i + 1)).length := by omega
+    simp only [getTypeT, List.getElem?_set_self hlt, ite_true]
+    have : t ≠ NO_TYPE := by simp only [NO_TYPE, MAX_TYPE_ID] at ht ⊢; omega
+    simp [this]
+  · rw [ite_eq_right hi, ← getTypeT_growTypes x.types (e + 1) i]
+    simp only [getTypeT, List.getElem?_set_ne (Ne.symm hi)]
+
+/-- **`get_type` after `clear`**: id `e` reads absent, every other id is unchanged. -/
+theorem getType_clear (x : TIx) (e i : Nat) :
+    (x.clear e).getType i = if i = e then none else x.getType i := by
+  simp only [TIx.getType, TIx.clear]
+  split
+  · by_cases hi : i = e
+    · subst hi; simp [getTypeT, List.getElem?_set_self (by omega)]
+    · simp [getTypeT, List.getElem?_set_ne (Ne.symm hi), hi]
+  · rename_i hl
+    by_cases hi : i = e
+    · subst hi; simp [getTypeT, List.getElem?_eq_none (Nat.le_of_not_lt hl)]
+    · simp [hi]
+
+/-- `prepare` and `prepare_tiers` change no type anyone can read. -/
+theorem getType_prepare (x : TIx) (m n i : Nat) : (x.prepare m n).getType i = x.getType i := by
+  simp [TIx.getType, TIx.prepare, getTypeT_growTypes]
+
+theorem getType_prepareTiers (x : TIx) (s1 s2 s3 len i : Nat) :
+    (x.prepareTiers s1 s2 s3 len).getType i = x.getType i := by
+  simp only [TIx.getType, TIx.prepareTiers]; split
+  · exact getTypeT_growTypes _ _ _
+  · rfl
+
+/-- The endpoint half of each operation is exactly the `Ix` operation, so every theorem
+above (`get_set`, `get_clear`, `get_prepare`, `view_prepareTiers`, `run_refines`) is about
+the new `EndpointIndex` too. -/
+theorem tix_ix (x : TIx) (e s d t m n s1 s2 s3 len : Nat) :
+    (x.set e s d t).ix = x.ix.set e s d ∧ (x.clear e).ix = x.ix.clear e ∧
+    (x.prepare m n).ix = x.ix.prepare m n ∧
+    (x.prepareTiers s1 s2 s3 len).ix = x.ix.prepareTiers s1 s2 s3 len :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-! ### Any sequence of operations, with types -/
+
+inductive TOp where
+  | set (e s d t : Nat)
+  | clear (e : Nat)
+  | prepare (maxEdgeId maxEndpoint : Nat)
+
+def TOp.apply (x : TIx) : TOp → TIx
+  | .set e s d t => x.set e s d t
+  | .clear e => x.clear e
+  | .prepare m n => x.prepare m n
+
+/-- Every caller passes a type id from `edge_type_slot` (at most `MAX_TYPE_ID`; `set`'s
+`debug_assert_ne!(type_id, NO_TYPE)`). -/
+def TOp.valid : TOp → Prop
+  | .set _ s d t => Valid s d ∧ t ≤ MAX_TYPE_ID
+  | _ => True
+
+/-- The endpoint half of an operation. -/
+def TOp.ep : TOp → Op
+  | .set e s d _ => .set e s d
+  | .clear e => .clear e
+  | .prepare m n => .prepare m n
+
+/-- The reference for the type column: a flat map from edge id to type. -/
+def TOp.tref (g : Nat → Option Nat) : TOp → (Nat → Option Nat)
+  | .set e _ _ t => fun i => if i = e then some t else g i
+  | .clear e => fun i => if i = e then none else g i
+  | .prepare _ _ => g
+
+def trun (x : TIx) (ops : List TOp) : TIx := ops.foldl TOp.apply x
+def trefRun (g : Nat → Option Nat) (ops : List TOp) : Nat → Option Nat := ops.foldl TOp.tref g
+
+theorem trun_ix (ops : List TOp) : ∀ x : TIx, (trun x ops).ix = run x.ix (ops.map TOp.ep) := by
+  induction ops with
+  | nil => intro x; rfl
+  | cons op ops ih =>
+    intro x
+    simp only [trun, List.foldl_cons, List.map_cons, run] at ih ⊢
+    rw [ih]; cases op <;> rfl
+
+theorem trun_types (ops : List TOp) : ∀ (x : TIx) (g : Nat → Option Nat), (∀ i, x.getType i = g i) →
+    (∀ op ∈ ops, op.valid) → ∀ i, (trun x ops).getType i = trefRun g ops i := by
+  induction ops with
+  | nil => intro x g hg _ i; exact hg i
+  | cons op ops ih =>
+    intro x g hg hv i
+    refine ih (op.apply x) (op.tref g) (fun j => ?_) (fun o ho => hv o (List.mem_cons_of_mem _ ho)) i
+    have hop := hv op (List.mem_cons_self ..)
+    cases op with
+    | set e s d t => simp only [TOp.apply, TOp.tref]; rw [getType_set x e s d t hop.2, hg]
+    | clear e => simp only [TOp.apply, TOp.tref]; rw [getType_clear, hg]
+    | prepare m n => simp only [TOp.apply, TOp.tref]; rw [getType_prepare, hg]
+
+/-- **Headline, with types.** After any valid sequence of `set` / `clear` / `prepare` on a
+well-formed index that agrees with the two reference maps, `get` agrees with the endpoint
+map and `get_type` with the type map, id by id. -/
+theorem trun_refines (ops : List TOp) (x : TIx) (f : Nat → Option Slot) (g : Nat → Option Nat)
+    (hw : WF x.ix) (hf : ∀ i, x.get i = f i) (hg : ∀ i, x.getType i = g i)
+    (hv : ∀ op ∈ ops, op.valid) :
+    WF (trun x ops).ix ∧ (∀ i, (trun x ops).get i = refRun f (ops.map TOp.ep) i) ∧
+      ∀ i, (trun x ops).getType i = trefRun g ops i := by
+  have hv' : ∀ op ∈ ops.map TOp.ep, op.valid := by
+    intro op hop
+    obtain ⟨o, ho, rfl⟩ := List.mem_map.1 hop
+    have := hv o ho
+    cases o <;> simp_all [TOp.ep, TOp.valid, Op.valid]
+  have h := run_refines (ops.map TOp.ep) x.ix f hw hf hv'
+  refine ⟨?_, fun i => ?_, trun_types ops x g hg hv⟩
+  · rw [trun_ix]; exact h.1
+  · simp only [TIx.get]; rw [trun_ix]; exact h.2 i
+
+theorem empty_getType (i : Nat) : ({} : TIx).getType i = none := by
+  simp [TIx.getType, getTypeT]
+
+/-- The two reference maps move together: every operation either writes both (`set`),
+clears both (`clear`) or neither (`prepare`). -/
+theorem ref_isSome (ops : List TOp) : ∀ (f : Nat → Option Slot) (g : Nat → Option Nat),
+    (∀ i, (f i).isSome = (g i).isSome) →
+    ∀ i, (refRun f (ops.map TOp.ep) i).isSome = (trefRun g ops i).isSome := by
+  induction ops with
+  | nil => intro f g h i; exact h i
+  | cons op ops ih =>
+    intro f g h i
+    simp only [List.map_cons, refRun, trefRun, List.foldl_cons] at ih ⊢
+    apply ih
+    intro j
+    cases op with
+    | set e s d t => simp only [TOp.ep, Op.ref, TOp.tref]; split <;> simp_all
+    | clear e => simp only [TOp.ep, Op.ref, TOp.tref]; split <;> simp_all
+    | prepare m n => exact h j
+
+/-- **An edge has endpoints iff it has a type.** From a fresh index, after any valid
+sequence of operations, `get` and `get_type` are absent for exactly the same ids: the type
+column never reports a type for a deleted or never-created edge, and never loses the type of
+a live one (what `relationship_type_matrix` held before #3967). -/
+theorem fresh_type_iff_endpoints (ops : List TOp) (hv : ∀ op ∈ ops, op.valid) (i : Nat) :
+    ((trun {} ops).get i).isSome = ((trun {} ops).getType i).isSome := by
+  obtain ⟨_, h1, h2⟩ := trun_refines ops {} (fun _ => none) (fun _ => none) empty_wf
+    (fun i => empty_get i) empty_getType hv
+  rw [h1, h2]
+  exact ref_isSome ops _ _ (fun _ => rfl) i
+
+/-- The Rust test `types_round_trip_and_clear_with_the_endpoints`: the largest storable
+type id is not the empty marker, and a cleared id reads absent. -/
+theorem max_type_id_reads_back (x : TIx) (e s d : Nat) :
+    (x.set e s d MAX_TYPE_ID).getType e = some MAX_TYPE_ID ∧ ((x.set e s d MAX_TYPE_ID).clear e).getType e = none := by
+  refine ⟨by rw [getType_set x e s d _ (Nat.le_refl _)]; simp, by rw [getType_clear]; simp⟩
+
+#print axioms trun_refines
+#print axioms fresh_type_iff_endpoints
 -- PROOFS
 
 end Falkor.EndpointIndex

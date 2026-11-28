@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "check": "pokec",
+  "verdict": "regression",
+  "confirmed": true,
+  "summary": "Did not finish: the 3-hop read stopped returning on 6.0.4 and the server ignored PING for 30.4 s.",
+  "candidate": {
+    "image": "falkordb/falkordb-server@sha256:698a6e748b42699c1f63af01f8902652b764582e363731de56c7d566c322c209",
+    "commit": "6ca3adc9d0418f76c5a15f820552e0603a65e553",
+    "label": "6.0.4"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:f4f60c62532b67f8651d0f4f50bbb4db7548717b502bd05abd80e668f2d974c6",
+    "commit": "32aacf47f23f9df7f7da216f74eeb07f537feb94",
+    "label": "6.0.1"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "n4-standard-16",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+    "cores": 16
+  },
+  "started": "2026-11-24T03:00:12Z",
+  "finished": "2026-11-24T03:41:55Z",
+  "findings": [
+    {
+      "name": "3-hop read (User)-->()-->()-->(User) age >= 18",
+      "metric": "completed",
+      "candidate": 0,
+      "baseline": 1,
+      "ratio": 0.0,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "5% writes PING max",
+      "metric": "ping_max_ms",
+      "candidate": 30412.0,
+      "baseline": 9.8,
+      "ratio": 3103.2653,
+      "threshold": 1.5,
+      "direction": "higher_is_worse",
+      "status": "regression"
+    }
+  ],
+  "error": null,
+  "artifacts": [
+    "raw/latencies.csv",
+    "raw/ping.csv",
+    "raw/candidate-server.log"
+  ]
+}

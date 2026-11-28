@@ -41,7 +41,7 @@
 //! ## Type Parameters
 //!
 //! AST types are generic over `TVar` (variable type) to support two stages:
-//! - `Arc<String>`: Raw AST before binding -- variables are just names
+//! - `ArcStr`: Raw AST before binding -- variables are just names
 //!   (type alias: [`RawQueryIR`])
 //! - [`Variable`]: Bound AST with resolved variable IDs, scopes, and types
 //!   (type alias: [`BoundQueryIR`])
@@ -63,6 +63,7 @@
 //!           Var("b")
 //! ```
 
+use arcstr::ArcStr;
 use std::{collections::HashSet, fmt::Display, hash::Hash, mem::discriminant, sync::Arc};
 
 use itertools::Itertools;
@@ -86,7 +87,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Alias {
     /// A name the query wrote.
-    Named(Arc<String>),
+    Named(ArcStr),
     /// An unnamed node, relationship or path, numbered per query.
     Anon(u32),
 }
@@ -94,7 +95,7 @@ pub enum Alias {
 impl Alias {
     /// The name the query wrote, or `None` for an unnamed entity.
     #[must_use]
-    pub const fn name(&self) -> Option<&Arc<String>> {
+    pub const fn name(&self) -> Option<&ArcStr> {
         match self {
             Self::Named(name) => Some(name),
             Self::Anon(_) => None,
@@ -102,8 +103,8 @@ impl Alias {
     }
 }
 
-impl From<Arc<String>> for Alias {
-    fn from(name: Arc<String>) -> Self {
+impl From<ArcStr> for Alias {
+    fn from(name: ArcStr) -> Self {
         Self::Named(name)
     }
 }
@@ -139,7 +140,7 @@ pub trait VarKind {
     type Alias: Clone + std::fmt::Debug + Display + Eq + Hash;
 }
 
-impl VarKind for Arc<String> {
+impl VarKind for ArcStr {
     type Alias = Alias;
 }
 
@@ -221,7 +222,7 @@ impl Variable {
     /// The name the query wrote, or `None` for an unnamed pattern entity or a
     /// planner temporary.
     #[must_use]
-    pub fn name(&self) -> Option<&Arc<String>> {
+    pub fn name(&self) -> Option<&ArcStr> {
         self.alias.as_ref().and_then(Alias::name)
     }
 
@@ -252,7 +253,7 @@ impl Variable {
 /// ```
 ///
 /// # Type Parameter
-/// - `TVar`: Variable type (`Arc<String>` before binding, `Variable` after)
+/// - `TVar`: Variable type (`ArcStr` before binding, `Variable` after)
 #[derive(Clone, Debug)]
 pub enum ExprIR<TVar: VarKind> {
     /// Literal/constant value. Carries any runtime [`Value`] including
@@ -316,7 +317,7 @@ pub enum ExprIR<TVar: VarKind> {
     /// DISTINCT modifier for expressions
     Distinct,
     /// Property access (e.g., n.prop)
-    Property(Arc<String>),
+    Property(ArcStr),
     /// Function call with function definition
     FuncInvocation(Arc<GraphFn>),
     /// `CASE` expression, in either Cypher form.
@@ -360,12 +361,12 @@ pub enum ExprIR<TVar: VarKind> {
     ///
     /// Boxed: `QueryGraph` is 72 bytes but this variant is rare, so inlining
     /// it would bloat every node of every expression tree.
-    PatternComprehension(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
+    PatternComprehension(Box<QueryGraph<ArcStr, ArcStr, TVar>>),
     /// Parenthesized expression (for precedence)
     Paren,
     /// Pattern predicate should be rewritten in planner (boxed; see
     /// `PatternComprehension`).
-    Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
+    Pattern(Box<QueryGraph<ArcStr, ArcStr, TVar>>),
     /// A pattern comprehension that reads a variable bound inside the
     /// enclosing expression (a list comprehension, quantifier or `reduce`
     /// variable), so it cannot be hoisted into an Apply below the operator.
@@ -422,13 +423,27 @@ pub struct ReduceVars<TVar> {
 /// Payload of [`ExprIR::ShortestPath`].
 #[derive(Clone, Debug)]
 pub struct ShortestPathInfo {
-    pub rel_types: Vec<Arc<String>>,
+    pub rel_types: Vec<ArcStr>,
     pub min_hops: u32,
     pub max_hops: Option<u32>,
     pub directed: bool,
 }
 
 impl<TVar: VarKind + Clone> ExprIR<TVar> {
+    /// The loop variables this node binds for its children: a list
+    /// comprehension's or quantifier's element, `reduce`'s accumulator and
+    /// element; none for any other node. They are in scope from the returned
+    /// child index on: the list, and `reduce`'s initial value, are evaluated
+    /// outside them.
+    pub fn loop_vars(&self) -> (impl Iterator<Item = &TVar>, usize) {
+        let (vars, first_scoped) = match self {
+            Self::ListComprehension(var) | Self::Quantifier { var, .. } => ([Some(var), None], 1),
+            Self::Reduce(vars) => ([Some(&vars.accumulator), Some(&vars.iterator)], 2),
+            _ => ([None, None], usize::MAX),
+        };
+        (vars.into_iter().flatten(), first_scoped)
+    }
+
     /// `a AND b AND …` over `conjuncts`, kept flat.
     ///
     /// AND is associative, so an operand that is itself an AND contributes
@@ -569,7 +584,7 @@ pub struct NestedPlanRef<TVar> {
 }
 
 /// Quantifier types for list predicates (all, any, none, single).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QuantifierType {
     All,
     Any,
@@ -610,7 +625,7 @@ impl SupportAggregation for DynTree<ExprIR<Variable>> {
     }
 }
 
-impl SupportAggregation for DynTree<ExprIR<Arc<String>>> {
+impl SupportAggregation for DynTree<ExprIR<ArcStr>> {
     fn is_aggregation(&self) -> bool {
         self.root().indices::<Dfs>().any(|idx| {
             matches!(
@@ -1102,7 +1117,7 @@ pub enum QueryIR<TVar: VarKind> {
     },
     /// MATCH pattern WHERE filter (optional flag for OPTIONAL MATCH)
     Match {
-        pattern: QueryGraph<Arc<String>, Arc<String>, TVar>,
+        pattern: QueryGraph<ArcStr, ArcStr, TVar>,
         filter: Option<QueryExpr<TVar>>,
         optional: bool,
     },
@@ -1113,19 +1128,19 @@ pub enum QueryIR<TVar: VarKind> {
     },
     /// MERGE pattern ON CREATE SET ... ON MATCH SET ...
     Merge {
-        pattern: QueryGraph<Arc<String>, Arc<String>, TVar>,
-        on_create: Vec<SetItem<Arc<String>, TVar>>,
-        on_match: Vec<SetItem<Arc<String>, TVar>>,
+        pattern: QueryGraph<ArcStr, ArcStr, TVar>,
+        on_create: Vec<SetItem<ArcStr, TVar>>,
+        on_match: Vec<SetItem<ArcStr, TVar>>,
     },
     /// CREATE pattern
-    Create(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    Create(QueryGraph<ArcStr, ArcStr, TVar>),
     /// DELETE exprs (detach flag for DETACH DELETE)
     Delete {
         exprs: Vec<QueryExpr<TVar>>,
         detach: bool,
     },
     /// SET items
-    Set(Vec<SetItem<Arc<String>, TVar>>),
+    Set(Vec<SetItem<ArcStr, TVar>>),
     /// REMOVE items (properties or labels)
     Remove(Vec<QueryExpr<TVar>>),
     /// LOAD CSV FROM path AS var
@@ -1158,15 +1173,15 @@ pub enum QueryIR<TVar: VarKind> {
         write: bool,
     },
     CreateIndex {
-        label: Arc<String>,
-        attrs: Vec<Arc<String>>,
+        label: ArcStr,
+        attrs: Vec<ArcStr>,
         index_type: IndexType,
         entity_type: EntityType,
         options: Option<QueryExpr<TVar>>,
     },
     DropIndex {
-        label: Arc<String>,
-        attrs: Vec<Arc<String>>,
+        label: ArcStr,
+        attrs: Vec<ArcStr>,
         index_type: IndexType,
         entity_type: EntityType,
     },
@@ -1491,7 +1506,7 @@ impl<TVar: VarKind + Eq + Hash + Display> QueryIR<TVar> {
         }
     }
 
-    fn validate_set_items(items: &Vec<SetItem<Arc<String>, TVar>>) -> Result<(), String> {
+    fn validate_set_items(items: &Vec<SetItem<ArcStr, TVar>>) -> Result<(), String> {
         for item in items {
             if let SetItem::Attribute { target, .. } = item {
                 if let ExprIR::Property(_) = target.root().data()
@@ -1510,9 +1525,7 @@ impl<TVar: VarKind + Eq + Hash + Display> QueryIR<TVar> {
 
     /// Validates that inlined properties in node/relationship patterns are maps.
     /// Mirrors `_ValidateInlinedProperties` in the C `ast_validations.c`.
-    fn validate_inlined_properties(
-        p: &QueryGraph<Arc<String>, Arc<String>, TVar>
-    ) -> Result<(), String> {
+    fn validate_inlined_properties(p: &QueryGraph<ArcStr, ArcStr, TVar>) -> Result<(), String> {
         for node in &p.nodes {
             if !matches!(node.attrs.root().data(), ExprIR::Map) {
                 return Err(String::from(
@@ -1558,28 +1571,28 @@ impl<TVar: VarKind + Eq + Hash + Display> QueryIR<TVar> {
 }
 
 /// Type alias for unbound query IR (variables are just string names).
-pub type RawQueryIR = QueryIR<Arc<String>>;
+pub type RawQueryIR = QueryIR<ArcStr>;
 
 /// Type alias for bound query IR (variables have resolved IDs and types).
 pub type BoundQueryIR = QueryIR<Variable>;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use arcstr::ArcStr;
 
     use orx_tree::{DynTree, NodeRef};
 
     use super::ExprIR;
     use crate::{runtime::value::Value, tree};
 
-    type Expr = DynTree<ExprIR<Arc<String>>>;
+    type Expr = DynTree<ExprIR<ArcStr>>;
 
     fn var(name: &str) -> Expr {
-        tree!(ExprIR::Variable(Arc::new(name.to_string())))
+        tree!(ExprIR::Variable(ArcStr::from(name)))
     }
 
     fn op(
-        data: ExprIR<Arc<String>>,
+        data: ExprIR<ArcStr>,
         children: Vec<Expr>,
     ) -> Expr {
         tree!(data; children)
@@ -1644,11 +1657,11 @@ mod tests {
     #[test]
     fn no_operands_give_the_identity() {
         assert!(matches!(
-            ExprIR::<Arc<String>>::and_of([]).root().data(),
+            ExprIR::<ArcStr>::and_of([]).root().data(),
             ExprIR::Constant(Value::Bool(true))
         ));
         assert!(matches!(
-            ExprIR::<Arc<String>>::or_of([]).root().data(),
+            ExprIR::<ArcStr>::or_of([]).root().data(),
             ExprIR::Constant(Value::Bool(false))
         ));
     }

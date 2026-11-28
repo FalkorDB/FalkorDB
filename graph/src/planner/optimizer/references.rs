@@ -11,7 +11,7 @@
 //! Note that `Variable`'s `PartialEq` compares ids only, so `==` on two
 //! variables is the wrong test here.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 
@@ -215,7 +215,7 @@ pub(super) fn index_query_references_variable(
 
 /// Whether a CREATE/MERGE pattern's inline attributes reference the variable.
 fn query_graph_references_variable(
-    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    pattern: &QueryGraph<ArcStr, ArcStr, Variable>,
     key: VarKey,
 ) -> bool {
     pattern
@@ -229,7 +229,7 @@ fn query_graph_references_variable(
 }
 
 fn set_items_reference_variable(
-    items: &[SetItem<Arc<String>, Variable>],
+    items: &[SetItem<ArcStr, Variable>],
     key: VarKey,
 ) -> bool {
     items.iter().any(|item| match item {
@@ -260,6 +260,7 @@ pub(super) fn subtree_references_variable(
 
 #[cfg(test)]
 mod tests {
+    use arcstr::ArcStr;
     use std::sync::Arc;
 
     use orx_tree::DynTree;
@@ -290,7 +291,7 @@ mod tests {
 
     fn eq(value: QueryExpr<Variable>) -> IndexQuery<QueryExpr<Variable>> {
         IndexQuery::Equal {
-            key: Arc::new("k".to_string()),
+            key: ArcStr::from("k"),
             value,
         }
     }

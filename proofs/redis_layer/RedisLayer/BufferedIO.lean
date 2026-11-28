@@ -3,20 +3,6 @@
 
 Line numbers refer to `origin/main` (`3fec7d7c9`).
 
-| here | there |
-| --- | --- |
-| `le` / `fromLE`               | `u64::to_le_bytes` / `from_le_bytes` (8 bytes), `f32` (4 bytes) |
-| `toU` / `ofU`                 | `i64` two's complement under `to_le_bytes` |
-| `W`, `record`                    | the logical `Writer` calls and their inline record (`:68-103`, `:107-118`) |
-| `W.enc`                       | the logical byte stream (inline record, or `[6] ++ data` for a blob) |
-| `flush`/`accommodate`/`push`  | `BufferedWriter::flush` `:51`, `::accommodate` `:59` |
-| `write`, `G`                  | `write_unsigned/signed/double/float/buffer` `:68-126`, `finish` `:129` |
-| `Rd`, `ensure`, `readTag`, `readBytes` | `BufferedReader::ensure_available` `:221`, `read_tag` `:229`, `read_bytes` `:246` |
-| `readW`                       | `read_unsigned/signed/double/float/buffer` `:272-330` (+ trait shims `:177-192`) |
-| `listSrc`                     | `load_chunk` `:212` over `RedisModule_LoadStringBuffer` |
-| `pipeSrc`, `frame`            | `PipeWriter::flush/finish` `:357-382`, `PipeReader::load_chunk` `:498` |
-| `vecWrite`                    | `VecWriter` `:576-620` |
-
 The Redis RDB is modelled as the ordered list of buffers `RedisModule_SaveStringBuffer`
 stored; `RedisModule_LoadStringBuffer` hands them back in order (the Redis module API
 contract — the only FFI fact used, and it enters as the definition of `listSrc`, not as an
@@ -61,7 +47,7 @@ theorem toU_lt (i : Int) (h : i64ok i) : toU i < 256 ^ 8 := by
 theorem ofU_toU (i : Int) (h : i64ok i) : ofU (toU i) = i := by
   unfold toU ofU i64ok at *; split <;> split <;> omega
 
-/-! ## Tags (`:22-29`) -/
+/-! ## Tags -/
 def TYPE_BYTES := 0
 def TYPE_FLOAT := 1
 def TYPE_DOUBLE := 2
@@ -98,7 +84,7 @@ theorem rec_ne (x : W) : record x ≠ [] := by cases x <;> simp [record]
 section Writer
 variable (B : Nat)   -- `BUFFER_SIZE` (256_000); every theorem holds for any `B ≥ 9`.
 
-/-- Does `write_buffer` inline (`:111-112`)? Non-buffers always inline. -/
+/-- Does `write_buffer` inline? Non-buffers always inline. -/
 def inl : W → Bool
   | .buf ds => decide (1 + 8 + ds.length ≤ B)
   | _ => true
@@ -116,21 +102,21 @@ structure BW where
   buf : Bytes
   deriving Repr
 
-/-- `flush` (`:51-56`). -/
+/-- `flush`. -/
 def flush (w : BW) : BW := if w.buf.isEmpty then w else ⟨w.out ++ [w.buf], []⟩
-/-- `accommodate` (`:59-66`). -/
+/-- `accommodate`. -/
 def accommodate (w : BW) (needed : Nat) : BW :=
   if w.buf.length + needed > B then flush w else w
 def push (w : BW) (bs : Bytes) : BW := ⟨w.out, w.buf ++ bs⟩
 
-/-- One writer call (`write_unsigned` … `write_buffer`, `:68-126`). -/
+/-- One writer call (`write_unsigned` … `write_buffer`). -/
 def write (w : BW) (x : W) : BW :=
   if inl B x then push (accommodate B w (record x).length) (record x)
   else
     let w := flush (push (accommodate B w 1) [TYPE_BLOB])
     ⟨w.out ++ [payload x], w.buf⟩
 
-/-- `finish` (`:129`): flush the tail; the result is the RDB buffer list. -/
+/-- `finish`: flush the tail; the result is the RDB buffer list. -/
 def finish (w : BW) : List Bytes := (flush w).out
 
 /-- What a writer starting with pending buffer `buf` emits for `xs`. -/

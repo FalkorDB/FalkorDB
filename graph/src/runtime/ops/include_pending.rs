@@ -9,7 +9,7 @@
 //! Used inside MERGE match sub-plans so they see in-flight mutations from
 //! prior clauses in the same query.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use crate::graph::graph::NodeId;
 use crate::parser::ast::{QueryNode, Variable};
@@ -26,7 +26,7 @@ use roaring::RoaringTreemap;
 pub struct IncludePendingOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    node_pattern: &'a QueryNode<Arc<String>, Variable>,
+    node_pattern: &'a QueryNode<ArcStr, Variable>,
     /// Extra pending nodes to emit after child exhaustion.
     pending_extra: Option<Box<dyn Iterator<Item = NodeId> + 'a>>,
     /// Nodes to filter out of child results.
@@ -53,7 +53,7 @@ impl<'a> IncludePendingOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        node_pattern: &'a QueryNode<ArcStr, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {

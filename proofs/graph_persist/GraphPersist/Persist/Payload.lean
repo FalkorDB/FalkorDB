@@ -3,7 +3,7 @@ import GraphPersist.Persist.Store
 namespace GraphPersist.Persist
 open GraphPersist
 
-/-! ## Payload directory (`EncodeState`, serialization.rs:120-158) -/
+/-! ## Payload directory (`EncodeState`, serialization.rs) -/
 
 inductive St where
   | init | nodes | delNodes | edges | delEdges | schema | labelsM | relM | adj | lblsM | cch | final
@@ -22,7 +22,25 @@ def St.ofU : Nat → Option St
 theorem St.ofU_toU (s : St) : St.ofU s.toU = some s := by cases s <;> rfl
 theorem St.toU_lt (s : St) : s.toU < 2 ^ 64 := by cases s <;> decide
 
-/-- The states `decode_payload_directory` (decoder/mod.rs:48) accepts: all but
+/-- `from_u64` refuses every value past `Final = 11` (`_ => None`). -/
+theorem St.ofU_none (v : Nat) (h : 12 ≤ v) : St.ofU v = none := by
+  match v, h with
+  | v + 12, _ => rfl
+
+/-- `EncodeState::from_u64` is exactly the inverse of the `#[repr(u64)]` discriminant:
+`from_u64 v = Some s` iff `s as u64 == v` (so every tag the encoder writes decodes to its state,
+and nothing else decodes). -/
+theorem St.ofU_iff (v : Nat) (s : St) : St.ofU v = some s ↔ s.toU = v := by
+  constructor
+  · intro h
+    by_cases hv : v < 12
+    · have : v = 0 ∨ v = 1 ∨ v = 2 ∨ v = 3 ∨ v = 4 ∨ v = 5 ∨ v = 6 ∨ v = 7 ∨ v = 8 ∨ v = 9 ∨ v = 10 ∨ v = 11 := by omega
+      rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+        cases s <;> simp_all [St.ofU, St.toU]
+    · rw [St.ofU_none v (by omega)] at h; cases h
+  · rintro rfl; exact St.ofU_toU s
+
+/-- The states `decode_payload_directory` (decoder/mod.rs) accepts: all but
 `CchIndices` (no CCH index in this module), `Init` and `Final` (never saved). -/
 def St.accepted : St → Bool
   | .init | .cch | .final => false
@@ -39,7 +57,7 @@ structure Entry where
 def encDir (es : List Entry) : Stream :=
   encU es.length ++ es.flatMap fun e => encU e.st.toU ++ encU e.count
 
-/-- The directory loop of `decode_payload_directory` (decoder/mod.rs:48-72), which
+/-- The directory loop of `decode_payload_directory` (decoder/mod.rs), which
 `rdb_load_graph` (:128) and `load_graph_from_reader` (:509) call: both words are read
 before the state is checked, and an unknown, `CchIndices`, `Init` or `Final` state fails. -/
 def decDirEntry : Dec (St × Nat) :=
@@ -125,9 +143,71 @@ theorem decIdx_rt {β : Type} (C : Codec β) (xs : List β) (hn : xs.length < 2 
   rw [hsnd] at this
   simpa [decIdx, encIdx] using this
 
+/-! ## Relation tensors: the type-slot check (#3967) -/
+
+/-- `MAX_TYPE_ID` (endpoint_index.rs): the largest type id the endpoint index's `u16` type
+column stores (`u16::MAX` is its empty marker). -/
+def maxTypeId : Nat := 65534
+
+/-- `check_type_fits(type_idx, edge_count)` (decoder/mod.rs): refuse a type that holds edges
+and whose id does not fit the type column (`edge_type_slot(type_idx).is_none()`). -/
+def checkTypeFits (idx ec : Nat) : Bool := decide (ec = 0 ∨ idx ≤ maxTypeId)
+
+theorem checkTypeFits_false (idx ec : Nat) : checkTypeFits idx ec = false ↔ 0 < ec ∧ maxTypeId < idx := by
+  simp only [checkTypeFits, decide_eq_false_iff_not, not_or]; omega
+
+/-- One iteration of the `RelationMatrices` arm since #3967:
+`let _relation_id = read_unsigned()?; push_tensor(&mut tensors, Tensor::decode(r)?)?` —
+`push_tensor` checks `check_type_fits(tensors.len(), tensor.edge_count())` before the push.
+`i` is `tensors.len()`: the tensor's position, all tensors being written in the one
+`RelationMatrices` payload `build_payloads` lists. -/
+def decTn (D : Dec Tn) (ec : Tn → Nat) (i : Nat) : Dec Tn :=
+  readU.bind fun _ => D.bind fun t => if checkTypeFits i (ec t) then Dec.pure t else Dec.fail
+
+def decTns (D : Dec Tn) (ec : Tn → Nat) : Nat → Nat → Dec (List Tn)
+  | _, 0 => Dec.pure []
+  | i, n + 1 => (decTn D ec i).bind fun t => (decTns D ec (i + 1) n).bind fun ts => Dec.pure (t :: ts)
+
+theorem decTns_rt (C : Codec Tn) (ec : Tn → Nat) : ∀ (xs : List Tn) (k : Nat),
+    k + xs.length ≤ 2 ^ 64 → (∀ i x, xs[i]? = some x → C.good x ∧ checkTypeFits (k + i) (ec x) = true) →
+    RT (decTns C.dec ec k xs.length) (((List.range' k xs.length).zip xs).flatMap fun (i, x) => encU i ++ C.enc x) xs
+  | [], _, _, _ => RT_pure []
+  | x :: xs, k, hk, hg => by
+    obtain ⟨hgx, hfx⟩ := hg 0 x rfl
+    have h1 : RT (decTn C.dec ec k) (encU k ++ (C.enc x ++ [])) x := by
+      have hfx' : checkTypeFits k (ec x) = true := by simpa using hfx
+      exact RT_bind (readU_rt k (by simp at hk; omega))
+        (f := fun _ => C.dec.bind fun t => if checkTypeFits k (ec t) then Dec.pure t else Dec.fail)
+        (RT_bind (C.rt x hgx) (f := fun t => if checkTypeFits k (ec t) then Dec.pure t else Dec.fail)
+          (by simp only [hfx', ite_true]; exact RT_pure x))
+    have h2 := decTns_rt C ec xs (k + 1) (by simp at hk; omega)
+      (fun i y hy => by have := hg (i + 1) y (by simpa using hy); rwa [Nat.add_assoc, Nat.add_comm 1 i])
+    have := RT_bind h1 (f := fun t => (decTns C.dec ec (k + 1) xs.length).bind fun ts => Dec.pure (t :: ts))
+      (RT_bind h2 (f := fun ts => Dec.pure (x :: ts)) (RT_pure _))
+    simpa [decTns, List.range'_succ, List.append_assoc] using this
+
+/-- **The relation tensors of a graph whose every edge-holding type fits read back**: the
+`RelationMatrices` payload decodes to the tensors (`decIdx_rt` plus the check). -/
+theorem decTns_rt0 (C : Codec Tn) (ec : Tn → Nat) (xs : List Tn) (hn : xs.length < 2 ^ 64)
+    (hg : ∀ x ∈ xs, C.good x) (hf : ∀ i x, xs[i]? = some x → checkTypeFits i (ec x) = true) :
+    RT (decTns C.dec ec 0 xs.length) (encIdx C.enc xs) xs := by
+  have := decTns_rt C ec xs 0 (by omega)
+    (fun i x hx => ⟨hg x (List.mem_of_getElem? hx), by simpa using hf i x hx⟩)
+  simpa [encIdx, List.range_eq_range'] using this
+
+/-- **#3967: a snapshot type with edges past the limit is refused, not restored**: when the
+`RelationMatrices` payload reaches a tensor at position `k > MAX_TYPE_ID` that holds edges,
+the load fails with an error right there (before any later payload or `Graph::restore`). -/
+theorem decTn_refuses (C : Codec Tn) (ec : Tn → Nat) (k j : Nat) (hj : j < 2 ^ 64) (t : Tn) (ht : C.good t)
+    (he : 0 < ec t) (hk : maxTypeId < k) (r : Stream) :
+    decTn C.dec ec k (encU j ++ C.enc t ++ r) = .err := by
+  have hf : checkTypeFits k (ec t) = false := (checkTypeFits_false _ _).2 ⟨he, hk⟩
+  simp only [decTn, Dec.bind, List.append_assoc, (readU_rt j hj).1, (C.rt t ht).1, hf]
+  rfl
+
 /-! ## The graph -/
 
-/-- `Header` (serializers/mod.rs:123). -/
+/-- `Header` (serializers/mod.rs). -/
 structure Hdr (Nm : Type) where
   name : Nm
   nodeCount : Nat
@@ -139,7 +219,7 @@ structure Hdr (Nm : Type) where
   multiEdge : List Bool
   keyCount : Nat
 
-/-- `Schema` (serializers/mod.rs:237). -/
+/-- `Schema` (serializers/mod.rs). -/
 structure Sch (Nm Ix Cn : Type) where
   attrs : List Nm
   labels : List Nm
@@ -154,6 +234,8 @@ structure Codecs (M Tn Nm Ix Cn : Type) where
   S : Codec (Sch Nm Ix Cn)
   Mx : Codec M
   Tx : Codec Tn
+  /-- `Tensor::edge_count` (#3967's `push_tensor` reads it). -/
+  ec : Tn → Nat
   m0 : M
 
 /-- What a `Graph` contributes to its payload. -/
@@ -176,15 +258,15 @@ structure G (M Tn Nm Ix Cn : Type) where
 variable {M Tn Nm Ix Cn : Type}
 
 /-- The ids `encode_with_range` walks: `0..=max_id` (`max_id = count + |deleted| - 1`,
-`Graph::max_node_id`, graph.rs:1783; the loop is `encode_with_range`, attribute_store.rs:1425-1437), skipping deleted ones. -/
+`Graph::max_node_id`, graph.rs; the loop is `encode_with_range`, attribute_store.rs), skipping deleted ones. -/
 def live (n : Nat) (del : List Nat) : List Nat := (List.range (n + del.length)).filter fun i => decide (i ∉ del)
 
-/-- `Header::from_graph(graph, graph_name, key_count)` (serializers/mod.rs:213). -/
+/-- `Header::from_graph(graph, graph_name, key_count)` (serializers/mod.rs). -/
 def hdrOf (g : G M Tn Nm Ix Cn) (name : Nm) (k : Nat) : Hdr Nm :=
   ⟨name, g.nodeCount, g.edgeCount, g.delNodes.length, g.delEdges.length, g.labelMats.length,
    g.tensors.length, g.multiEdge, k⟩
 
-/-- `build_payloads` (encoder/mod.rs:192-255). -/
+/-- `build_payloads` (encoder/mod.rs). -/
 def buildPayloads (g : G M Tn Nm Ix Cn) : List Entry :=
   (if g.nodeCount > 0 then [⟨.nodes, g.nodeCount, 0⟩] else []) ++
   (if g.delNodes.length > 0 then [⟨.delNodes, g.delNodes.length, 0⟩] else []) ++
@@ -200,7 +282,7 @@ still writes one — never reached: every payload entry has `count > 0`). -/
 def encRange (S : Store) (ids : List Nat) (count off : Nat) : Stream :=
   ((ids.drop off).take (max count 1)).flatMap (encEnt S)
 
-/-- `Graph::encode_payload` (graph.rs:5093-5146). -/
+/-- `Graph::encode_payload` (graph.rs). -/
 def encPayload (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (e : Entry) : Stream :=
   match e.st with
   | .nodes => encRange g.nodes (live g.nodeCount g.delNodes) e.count e.offset
@@ -213,7 +295,7 @@ def encPayload (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (e : Entry) : St
   | .lblsM => C.Mx.enc g.lbls
   | _ => []
 
-/-- `encode_graph` (encoder/mod.rs:68-88). -/
+/-- `encode_graph` (encoder/mod.rs). -/
 def encodeGraph (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (name : Nm) (ps : List Entry) (k : Nat) :
     Stream :=
   C.H.enc (hdrOf g name k) ++ C.S.enc g.sch ++ encDir ps ++ ps.flatMap (encPayload C g)
@@ -240,7 +322,7 @@ def decPayload (C : Codecs M Tn Nm Ix Cn) (relCount : Nat) : St × Nat → Dec (
   | (.edges, c) => (rep decEnt c).bind fun es => Dec.pure (.edges es)
   | (.delEdges, c) => (decRoar c).bind fun l => Dec.pure (.delE l)
   | (.labelsM, _) => readU.bind fun n => (decIdx C.Mx.dec n).bind fun ms => Dec.pure (.lm ms)
-  | (.relM, _) => (decIdx C.Tx.dec relCount).bind fun ts => Dec.pure (.rt ts)
+  | (.relM, _) => (decTns C.Tx.dec C.ec 0 relCount).bind fun ts => Dec.pure (.rt ts)
   | (.adj, _) => C.Mx.dec.bind fun m => Dec.pure (.adj m)
   | (.lblsM, _) => C.Mx.dec.bind fun m => Dec.pure (.lbls m)
   | _ => Dec.pure .skip
@@ -301,7 +383,7 @@ structure Restore (M Tn Nm Ix Cn : Type) where
   indexes : List Ix
   constraints : List Cn
 
-/-- `load_graph_from_reader` (decoder/mod.rs:431-537), behind `pipe_load_graph` (:406)
+/-- `load_graph_from_reader` (decoder/mod.rs), behind `pipe_load_graph` (:406)
 and `vec_load_graph` (:421). `attrs_name.len()` is the schema's attribute count (the
 names are distinct; `AttrNameMap` is an index set). -/
 def finish (C : Codecs M Tn Nm Ix Cn) (dest : Nm) (nc ec : Nat) (s : Sch Nm Ix Cn) (prs : List (PR M Tn)) :
@@ -347,6 +429,9 @@ structure WF (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) : Prop where
   ek : KindWF g.sch.attrs.length g.edgeCount g.delEdges g.edges
   lm : g.labelMats.length < 2 ^ 64 ∧ ∀ m ∈ g.labelMats, C.Mx.good m
   tn : g.tensors.length < 2 ^ 64 ∧ ∀ t ∈ g.tensors, C.Tx.good t
+  /-- #3967: every type that holds edges has an id the endpoint index's type column stores —
+  true of any graph this code built (`relationship_type_slot` refuses the edge otherwise). -/
+  tfit : ∀ i t, g.tensors[i]? = some t → checkTypeFits i (C.ec t) = true
   mx : C.Mx.good g.adj ∧ C.Mx.good g.lbls
 
 end GraphPersist.Persist

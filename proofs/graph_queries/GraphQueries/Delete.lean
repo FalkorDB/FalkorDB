@@ -1,22 +1,24 @@
 import GraphQueries.Queries
 /-
-# Edge creation and deletion; the stale type-matrix width (CONFIRMED BUG, fixed by #3277)
+# Edge creation and deletion; the edge type column
 
 | here | there (graph.rs) |
 | --- | --- |
 | `resolveRels`  | `delete_relationships` phase 1 (the `Phase 1` block from :2964) |
-| `deleteRels`   | `delete_relationships` :2953 (phase 2 from :2989; `release(rels, resolved)` :2994) |
+| `deleteRels`   | `delete_relationships`  (phase 2 from :2989; `release(rels, resolved)` ) |
 | `collectImplicit` | `delete_implicit_edges` collection loop (from :3088) |
-| `deleteImplicit`  | `delete_implicit_edges` :3088 (`release(freed, freed)` :3232) |
-| `createRelsBulk`  | `create_relationships_bulk` :2694 (shape refusals :2714/:2724, `create` :2732) |
+| `deleteImplicit`  | `delete_implicit_edges`  (`release(freed, freed)` ) |
+| `createRelsBulk`  | `create_relationships_bulk`  (shape refusals, the type-slot refusal (#3967), `create` ) |
 
 Every id-space move goes through `O` (IdContract.lean); theorems that need
 its behaviour take `IdSpaceContract O`.
 
-`remove_mask` builds its mask as `relationship_cap × relationship_types.len()`
-(`remove_mask` calls in `delete_relationships`, :3049, :3069). `Mat.removeMask` is a no-op on a dimension mismatch, which is
-what the release build does (`GrB_DIMENSION_MISMATCH` is only
-`debug_assert`ed, matrix.rs:927).
+#3967: an edge's type lives in the endpoint index's type column (`G.relTypes`), written by
+`set` with the endpoints and cleared by `clear_edge_endpoint` with them; the
+`relationship_type_matrix` and its mask removal are gone. (Before, a type matrix narrower
+than the type table made the mask removal a no-op, #3277; there is no width left to get wrong.)
+`Mat.removeMask` (the adjacency mask) is a no-op on a dimension mismatch, which is
+what the release build does (`GrB_DIMENSION_MISMATCH` is only `debug_assert`ed, matrix.rs).
 -/
 namespace GQ
 variable {V : Type}
@@ -43,7 +45,7 @@ def deleteRels (O : IdSpaceOps) (g : G V) (rels : List Nat) :
     let cand := (res.map (fun r => (r.2.2.1, r.2.2.2))).filter (fun p => !remainingEdge relMs' p.1 p.2)
     .ok ({ g0 with endpoints := fun x => if x ∈ ids then none else g.endpoints x,
                    relMs := relMs',
-                   relType := g.relType.removeMask g.relCap g.types.length et,
+                   relTypes := fun x => if x ∈ ids then none else g.relTypes x,
                    adj := g.adj.removeMask g.nodeCap g.nodeCap cand }, res)
 
 /-- Phase 1 does not mutate, so a refusal (an id already free) changes nothing. -/
@@ -53,14 +55,13 @@ theorem deleteRels_refused (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (
   have hne : rels ≠ [] := by intro h; subst h; cases he
   simp [deleteRels, hne, hC.release_refuses_recycled (relIds g) rels _ e he hd]
 
-/-- With consistent dimensions, every deleted edge loses its type entry, its
-endpoints, and its tensor entry, and is binned. -/
+/-- Every deleted edge loses its type, its endpoints, and its tensor entry, and is binned
+(#3967: no dimension hypothesis, the type is cleared with the endpoints). -/
 theorem deleteRels_clears (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (rels : List Nat)
     (r : G V) (out : List (Nat × Nat × Nat × Nat))
     (h : deleteRels O g rels = .ok (r, out))
-    (hw : g.relType.nr = g.relCap ∧ g.relType.nc = g.types.length)
     (e t s d : Nat) (hm : (e, t, s, d) ∈ out) :
-    r.relType.get e t = false ∧ r.endpoints e = none ∧ e ∈ r.delRels ∧
+    r.relTypes e = none ∧ r.endpoints e = none ∧ e ∈ r.delRels ∧
     ∀ tn ∈ r.relMs[t]?, (s, d, e) ∉ tn := by
   unfold deleteRels at h
   split at h
@@ -73,8 +74,7 @@ theorem deleteRels_clears (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (r
       have hid : e ∈ (resolveRels g rels).map (·.1) := List.mem_map.2 ⟨_, hm, rfl⟩
       have het : (e, t) ∈ (resolveRels g rels).map (fun r => (r.1, r.2.1)) := List.mem_map.2 ⟨_, hm, rfl⟩
       obtain ⟨hr1, -⟩ := hC.release_ok _ _ _ _ hsp
-      refine ⟨?_, by simp [hid], ?_, ?_⟩
-      · simp [Mat.get, Mat.removeMask, hw.1.symm, hw.2.symm, het]
+      refine ⟨by simp [hid], by simp [hid], ?_, ?_⟩
       · simp only [setRelIds, hr1, relIds]
         simp only [union, List.mem_append, List.mem_filter, decide_eq_true_eq]
         by_cases hh : e ∈ g.delRels
@@ -85,35 +85,26 @@ theorem deleteRels_clears (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (r
         obtain ⟨tn0, -, rfl⟩ := htn
         simp [het]
 
-/-- When `relationship_type_matrix` is
-narrower than the type table — exactly what `get_type_id_mut` left behind before #3277 —
-the bulk type-matrix removal is a no-op: a deleted edge keeps its type. -/
-theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
-    (out : List (Nat × Nat × Nat × Nat))
-    (h : deleteRels O g rels = .ok (r, out)) (hw : g.relType.nc ≠ g.types.length) :
-    r.relType = g.relType := by
-  unfold deleteRels at h
-  split at h
-  · cases h; rfl
-  · simp only at h
-    split at h
-    · cases h
-    · cases h; simp [Mat.removeMask, Ne.symm hw]
-
-/-- **`type_cleared_after_registration`** (#3277 fixed): registering a type through
-`get_type_id_mut` (constraint creation, a replica's schema record) no longer narrows
-`relationship_type_matrix`, so a later `DELETE` of an edge clears its type entry. -/
+/-- **`type_cleared_after_registration`** registering a type through
+`get_type_id_mut` (constraint creation, a replica's schema record) leaves every edge's type
+as it was, so a later `DELETE` of an edge clears its type (#3967: with no hypothesis on a
+type-matrix width, which no longer exists). -/
 theorem type_cleared_after_registration (O : IdSpaceOps) (hC : IdSpaceContract O) (chunk : Nat)
     (hc : 0 < chunk) (g : G V) (snew : String)
-    (hw : g.relType.nr = g.relCap ∧ g.relType.nc = g.types.length)
     (rels : List Nat) (r : G V) (out : List (Nat × Nat × Nat × Nat))
     (h : deleteRels O (getTypeIdMut chunk hc g snew).1 rels = .ok (r, out))
     (e t s d : Nat) (hm : (e, t, s, d) ∈ out) :
-    r.relType.get e t = false :=
-  (deleteRels_clears O hC _ rels r out h (getTypeIdMut_width chunk hc g snew hw) e t s d hm).1
+    r.relTypes e = none :=
+  (deleteRels_clears O hC _ rels r out h e t s d hm).1
 
-theorem relTypeId_two (g : G V) (e t t2 : Nat) (h : g.relType.row e = [(e, t), (e, t2)]) :
-    relTypeId g e = some t := by simp [relTypeId, h]
+/-- A deleted edge resolves to no type: `get_relationship_type_id` on it is the `expect`
+panic, `edge_has_type_id` is false for every type. -/
+theorem deleteRels_no_type (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (rels : List Nat)
+    (r : G V) (out : List (Nat × Nat × Nat × Nat)) (h : deleteRels O g rels = .ok (r, out))
+    (e t s d : Nat) (hm : (e, t, s, d) ∈ out) (t' : Nat) :
+    relTypeId r e = none ∧ edgeHasTypeId r e t' = false := by
+  have := (deleteRels_clears O hC g rels r out h e t s d hm).1
+  simp [relTypeId, edgeHasTypeId, this]
 
 /-- Pairs that lost their last edge leave the adjacency matrix. -/
 theorem deleteRels_adj (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
@@ -176,7 +167,7 @@ def deleteImplicit (O : IdSpaceOps) (g : G V) (dn ex : List Nat) :
   let cand := (all.map (fun r => (r.2.2.1, r.2.2.2))).filter (fun p =>
     (p.1 ∈ dn ∧ p.2 ∈ dn) || !remainingEdge relMs' p.1 p.2)
   let ep : Nat → Option (Nat × Nat) := fun x => if x ∈ ids then none else g.endpoints x
-  let g1 : G V := { g with endpoints := ep, relMs := relMs', relType := g.relType.removeMask g.relCap g.types.length et }
+  let g1 : G V := { g with endpoints := ep, relMs := relMs', relTypes := fun x => if x ∈ ids then none else g.relTypes x }
   let freed := toSet ids
   match O.release (relIds g1) freed freed with
   | none => .error "relationship"
@@ -256,17 +247,37 @@ theorem deleteImplicit_freed (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V)
       · exact Or.inl hh
       · exact Or.inr ⟨(toSet_mem _ _).2 (List.mem_map.2 ⟨y, hy, rfl⟩), decide_eq_true hh⟩
 
+/-- Every implicitly deleted edge reads no type afterwards (#3967: `clear_edge_endpoint`
+clears the type column with the endpoints; there is no type-matrix mask). -/
+theorem deleteImplicit_no_type (O : IdSpaceOps) (g : G V) (dn ex : List Nat)
+    (r : G V) (out : List (Nat × Nat × Nat × Nat)) (hok : deleteImplicit O g dn ex = .ok (r, out))
+    (y : Nat × Nat × Nat × Nat) (hy : y ∈ out) : r.relTypes y.1 = none ∧ r.endpoints y.1 = none := by
+  unfold deleteImplicit at hok
+  split at hok
+  · cases hok; cases hy
+  · simp only at hok
+    split at hok
+    · cases hok
+    · cases hok
+      have : y.1 ∈ ((g.relMs.mapIdx (fun t tn => (collectImplicit tn dn ex).map
+          (fun x => (x.2.2, t, x.1, x.2.1)))).flatMap id).map (·.1) := List.mem_map.2 ⟨y, hy, rfl⟩
+      exact ⟨ite_cond_eq_true _ _ (eq_true this), ite_cond_eq_true _ _ (eq_true this)⟩
+
 /-! ## `create_relationships_bulk` -/
 
-/-- `create_relationships_bulk` (:2694): refuse slices that disagree in
-length (:2714) or repeat an id (:2724) — both before anything moves — then
-`relationship_ids.create(ids)` (:2732), capacity growth, registration and
-the logical effect: tensor, endpoint index, adjacency and type matrix all
+/-- `create_relationships_bulk`: refuse slices that disagree in
+length or repeat an id, then (#3967) refuse a type whose slot does not fit the type column
+(`relationship_type_slot`) — all before anything moves — then
+`relationship_ids.create(ids)`, capacity growth, registration and
+the logical effect: tensor, endpoint index (endpoints and type), adjacency all
 gain the batch. -/
 def createRelsBulk (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty : String)
     (srcs dsts ids : List Nat) : Except String (G V) :=
   if srcs.length ≠ ids.length ∨ dsts.length ≠ ids.length then .error "graph: lengths" else
   if ¬ ids.Nodup then .error "graph: duplicate id" else
+  match relTypeSlot g ty with
+  | none => .error "graph: too many relationship types"
+  | some slot =>
   match O.create (relIds g) ids with
   | none => .error "relationship"
   | some sp =>
@@ -274,7 +285,7 @@ def createRelsBulk (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty
   let g1 : G V := setRelIds g sp
   let g2 := match ids.max? with
     | some m => if m + 1 > g1.relCap then
-        resizeRelMs { g1 with relCap := growCap chunk g1.relCap (m + 1) hc } else g1
+        { g1 with relCap := growCap chunk g1.relCap (m + 1) hc } else g1
     | none => g1
   let (g3, t) := getRelMatMut chunk hc g2 ty
   let g4 := resize chunk hc g3
@@ -283,11 +294,11 @@ def createRelsBulk (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty
     endpoints := fun x => match es.find? (·.2.2 == x) with
       | some y => some (y.1, y.2.1) | none => g4.endpoints x
     adj := es.foldl (fun m y => m.set y.1 y.2.1) g4.adj
-    relType := es.foldl (fun m y => m.set y.2.2 t) g4.relType }
+    relTypes := fun x => if x ∈ ids then some slot else g4.relTypes x }
 
-/-- The two shape refusals (new in #2846): `[0, 0]` no longer counts one
-relationship while building two tensor edges, and a short `srcs` no longer
-truncates the zip after every id was counted. -/
+/-- The two shape refusals `[0, 0]` is refused rather than counting one
+relationship while building two tensor edges, and a short `srcs` is refused rather than
+truncating the zip after every id was counted. -/
 theorem createRelsBulk_ragged (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty : String)
     (srcs dsts ids : List Nat) (h : srcs.length ≠ ids.length ∨ dsts.length ≠ ids.length) :
     createRelsBulk O chunk hc g ty srcs dsts ids = .error "graph: lengths" := by
@@ -297,6 +308,14 @@ theorem createRelsBulk_dup (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : 
     (h : ¬ ids.Nodup) :
     createRelsBulk O chunk hc g ty srcs dsts ids = .error "graph: duplicate id" := by
   simp [createRelsBulk, hl, h]
+
+/-- **#3967: a type past the limit is refused before anything moves**: no id is taken, no type
+registered, no edge written (nothing is returned but the error). -/
+theorem createRelsBulk_type_refused (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty : String)
+    (srcs dsts ids : List Nat) (hl : srcs.length = ids.length ∧ dsts.length = ids.length)
+    (hn : ids.Nodup) (h : relTypeSlot g ty = none) :
+    createRelsBulk O chunk hc g ty srcs dsts ids = .error "graph: too many relationship types" := by
+  simp [createRelsBulk, hl, hn, h]
 
 theorem foldl_set_mem (m : Mat) (es : List (Nat × Nat × Nat)) (f : Nat × Nat × Nat → Nat × Nat)
     (p : Nat × Nat) (hp : p ∈ m.ents) : p ∈ (es.foldl (fun m y => m.set (f y).1 (f y).2) m).ents := by
@@ -357,6 +376,8 @@ theorem createRelsBulk_endpoints (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk)
       have hnd : ids.Nodup := Classical.not_not.1 hnd0
       split at h
       · cases h
+      split at h
+      · cases h
       · cases h
         simp only
         have hm : (srcs.zip (dsts.zip ids)).map (·.2.2) = ids := by
@@ -375,5 +396,61 @@ theorem createRelsBulk_endpoints (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk)
             · have hz : z.2.2 ≠ y.2.2 := fun he => hnd'.1 (he ▸ List.mem_map_of_mem hy')
               simp [hz, ih hy' hnd'.2]
         rw [this]
+
+/-- **#3967: each new edge reads its type**: the type column holds, for every id of the
+batch, the index of `ty` in the type table (the slot checked up front is the id
+registration gives it, `relTypeSlot_getRelMatMut`), and that slot fits a `u16` below the
+empty marker. -/
+theorem createRelsBulk_types (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g r : G V) (ty : String)
+    (hT : TInv g) (srcs dsts ids : List Nat) (h : createRelsBulk O chunk hc g ty srcs dsts ids = .ok r)
+    (e : Nat) (he : e ∈ ids) :
+    ∃ t, r.relTypes e = some t ∧ r.types[t]? = some ty ∧ t ≤ maxTypeId ∧
+      relTypeId r e = some t ∧ edgeHasType r e ty = true := by
+  unfold createRelsBulk at h
+  split at h
+  · cases h
+  split at h
+  · cases h
+  split at h
+  · cases h
+  rename_i slot hslot
+  split at h
+  · cases h
+  rename_i sp hsp
+  cases h
+  generalize hg2 : (match ids.max? with
+      | some m => if m + 1 > (setRelIds g sp).relCap then
+          { setRelIds g sp with relCap := growCap chunk (setRelIds g sp).relCap (m + 1) hc } else setRelIds g sp
+      | none => setRelIds g sp) = g2
+  have hT1 : TInv g2 := by
+    rw [← hg2]; split
+    · split <;> simpa [TInv, setRelIds] using hT
+    · simpa [TInv, setRelIds] using hT
+  have hty : g2.types = g.types := by
+    rw [← hg2]; split
+    · split <;> rfl
+    · rfl
+  have hslot2 : relTypeSlot g2 ty = some slot := by
+    unfold relTypeSlot getTypeId at hslot ⊢; rw [hty]; exact hslot
+  have hidx := relTypeSlot_getRelMatMut chunk hc g2 ty hT1 slot hslot2
+  have hspec := getRelMatMut_spec chunk hc g2 ty hT1
+  obtain ⟨-, -, -, k4, -⟩ := resize_keeps chunk hc (getRelMatMut chunk hc g2 ty).1
+  have hfit : slot ≤ maxTypeId := by
+    obtain ⟨hs, hle⟩ := (edgeTypeSlot_spec _ _).1 hslot; rw [hs]; exact hle
+  have htys : (resize chunk hc (getRelMatMut chunk hc g2 ty).1).types[slot]? = some ty := by
+    rw [k4, ← hidx]; exact hspec.2.1
+  have hmem : ty ∈ (getRelMatMut chunk hc g2 ty).1.types := List.mem_of_getElem? hspec.2.1
+  obtain ⟨i, hi⟩ := idx_some _ _ hmem
+  have h2 : (getRelMatMut chunk hc g2 ty).2 = (idx (getRelMatMut chunk hc g2 ty).1.types ty).getD 0 := rfl
+  rw [hi, Option.getD_some, hidx] at h2
+  have hid : getTypeId (resize chunk hc (getRelMatMut chunk hc g2 ty).1) ty = some slot := by
+    unfold getTypeId; rw [k4, hi, h2]
+  refine ⟨slot, ?_, ?_, hfit, ?_, ?_⟩
+  · simp [he]
+  · exact htys
+  · simp [relTypeId, he]
+  · show (match getTypeId (resize chunk hc (getRelMatMut chunk hc g2 ty).1) ty with
+      | some t => edgeHasTypeId _ e t | none => false) = true
+    rw [hid]; simp [edgeHasTypeId, he]
 
 end GQ

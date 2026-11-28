@@ -28,6 +28,7 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
+use arcstr::ArcStr;
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
 
@@ -143,7 +144,7 @@ pub fn register(funcs: &mut Functions) {
                     Arc::make_mut(&mut v).reverse();
                     Ok(Value::List(v))
                 }
-                Value::String(s) => Ok(Value::String(Arc::new(s.chars().rev().collect()))),
+                Value::String(s) => Ok(Value::String(ArcStr::from(s.chars().rev().collect::<String>()))),
                 Value::Null => Ok(Value::Null),
                 _ => unreachable!(),
             }

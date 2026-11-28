@@ -96,7 +96,7 @@ theorem payload_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g
       (RT_bind (decIdx_rt C.Mx g.labelMats hw.lm.1 hw.lm.2) (f := fun ms => Dec.pure (PR.lm (Tn := Tn) ms)) (RT_pure _))
     simpa [decPayload, encPayload, prOf] using this
   · -- relation tensors
-    have := RT_bind (decIdx_rt C.Tx g.tensors hw.tn.1 hw.tn.2) (f := fun ts => Dec.pure (PR.rt (M := M) ts)) (RT_pure _)
+    have := RT_bind (decTns_rt0 C.Tx C.ec g.tensors hw.tn.1 hw.tn.2 hw.tfit) (f := fun ts => Dec.pure (PR.rt (M := M) ts)) (RT_pure _)
     simpa [decPayload, encPayload, prOf] using this
   · have := RT_bind (C.Mx.rt _ hw.mx.1) (f := fun m => Dec.pure (PR.adj (Tn := Tn) m)) (RT_pure _)
     simpa [decPayload, encPayload, prOf] using this
@@ -218,7 +218,7 @@ theorem load_encode (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C 
 boundary short of its end, makes `load_graph_from_reader` ask for another word. Behind
 `vec_load_graph` the reader is `BufferedReader::from_slice` (`rdb = NULL`), whose
 `ensure_available → load_chunk` then calls `RedisModule_LoadStringBuffer(NULL)`
-(`buffered_io.rs:212-224`; redis_layer `from_slice_past_end`): a crash, not an `Err`. -/
+(`buffered_io.rs`; redis_layer `from_slice_past_end`): a crash, not an `Err`. -/
 theorem truncated_payload_eof (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm)
     (p : Stream) (hp : StrictPre p (encodeGraph C g g.name (buildPayloads g) 1)) :
     loadFromReader C dest p = .eof :=

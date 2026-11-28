@@ -19,8 +19,10 @@ Reported:
             PROVEN / CONDITIONAL / MODELLED row: their model may be stale
   added     new production fns no COVERAGE.tsv row lists
   removed   fns the diff deletes or renames that still have rows
-A fn spans from its `fn` line to the line before the next `fn` in the file;
-fns are matched to rows by (file, name), the row's line only breaking ties
+A fn spans from its `fn` line (or the topmost attribute above it that changes
+behaviour, such as `#[cfg]`) to its closing brace, so a diff that only adds a
+lint or inlining attribute such as `#[allow(..)]`, or a doc comment, touches no fn.
+Fns are matched to rows by (file, name), the row's line only breaking ties
 between same-name fns of one file.
 """
 import argparse
@@ -69,15 +71,327 @@ def fns_of(proofs, root, rel):
     return res
 
 
-def owner(fns, line):
-    """Index of the fn whose span holds `line`, or None before the first fn."""
-    best = None
-    for i, (start, _, _) in enumerate(fns):
-        if start <= line:
-            best = i
+def read_lines(root, rel):
+    """The lines of one Rust file of an extracted tree ([] if it is absent)."""
+    p = os.path.join(root, rel)
+    if not os.path.exists(p):
+        return []
+    with open(p, encoding='utf-8', errors='replace') as f:
+        return f.read().split('\n')
+
+
+# Attributes that leave what a fn computes unchanged (lints, docs, inlining
+# hints): editing one above a fn touches no fn. Any other attribute (`cfg`,
+# `cfg_attr`, `test`, `no_mangle`, `target_feature`, ...) can change which body
+# is compiled or how it runs, so it belongs to the fn below it.
+COSMETIC_ATTRS = frozenset(('allow', 'warn', 'expect', 'deny', 'forbid', 'doc',
+                            'must_use', 'inline', 'cold', 'rustfmt::skip',
+                            'coverage', 'skip'))          # skip: cargo-tarpaulin's marker
+ATTR_PATH = re.compile(r'#!?\[\s*([A-Za-z_][A-Za-z0-9_]*(?:\s*::\s*[A-Za-z_][A-Za-z0-9_]*)*)')
+
+
+RAW_OPEN = re.compile(r'(?<![A-Za-z0-9_])[bc]?r(#*)"')
+
+
+def lex(lines):
+    """(code, cont) for a Rust file: `code[i]` is line i+1 with comments removed
+    and string and char literals blanked to `""` / `''`, and `cont[i]` is True
+    when line i+1 starts inside a string or block comment. The state carries
+    across lines, so a raw string, a multi-line string or a `/* */` comment can
+    never pass its `[`, `}` or `"` off as code."""
+    code, cont = [], []
+    mode, hashes, depth = None, 0, 0             # mode: None, 'str', 'raw', 'block'
+    for line in lines:
+        cont.append(mode is not None)
+        out, i, n = [], 0, len(line)
+        while i < n:
+            if mode == 'block':
+                if line.startswith('/*', i):
+                    depth, i = depth + 1, i + 2
+                elif line.startswith('*/', i):
+                    depth, i = depth - 1, i + 2
+                    if not depth:
+                        mode = None
+                        out.append(' ')
+                else:
+                    i += 1
+            elif mode == 'str':
+                if line[i] == '\\':
+                    i += 2
+                else:
+                    mode = None if line[i] == '"' else mode
+                    i += 1
+            elif mode == 'raw':
+                if line.startswith('"' + '#' * hashes, i):
+                    mode, i = None, i + 1 + hashes
+                else:
+                    i += 1
+            elif line.startswith('//', i):
+                break
+            elif line.startswith('/*', i):
+                mode, depth, i = 'block', 1, i + 2
+            elif m := RAW_OPEN.match(line, i):
+                out.append('""')
+                mode, hashes, i = 'raw', len(m[1]), m.end()
+            elif line[i] == '"':
+                out.append('""')
+                mode, i = 'str', i + 1
+            elif line[i] == "'" and i + 1 < n and line[i + 1] == '\\':
+                j = line.find("'", i + 3)                 # '\n', '\'', '\u{7d}'
+                out.append("''")
+                i = (j if j >= 0 else n) + 1
+            elif line[i] == "'" and i + 2 < n and line[i + 2] == "'":
+                out.append("''")                          # 'x'; otherwise a lifetime
+                i += 3
+            else:
+                out.append(line[i])
+                i += 1
+        code.append(''.join(out).rstrip())
+    return code, cont
+
+
+def attr_start(code, j):
+    """1-based line of the `#[` that opens an attribute ending on line `j`
+    (possibly multi-line, possibly with blank lines inside), or None when line `j` does not close an attribute
+    that fills its lines. `code` is lex(lines)[0]."""
+    for k in range(j, 0, -1):
+        s = code[k - 1].strip()
+        if s.startswith(('#[', '#![')):
+            text = '\n'.join(code[i - 1].strip() for i in range(k, j + 1))
+            depth = 0
+            for n, ch in enumerate(text):
+                depth += (ch == '[') - (ch == ']')
+                if depth == 0 and ch == ']':
+                    # the attribute's own `]` must be the last character
+                    return k if n == len(text) - 1 else None
+            return None
+        if s.endswith((';', '{', '}')):
+            return None                           # a blank line may sit inside the attribute
+    return None
+
+
+def is_cosmetic(code, k):
+    """True when the attribute opening on line `k` is one of COSMETIC_ATTRS, or
+    a `cfg_attr(pred, ..)` that only adds such attributes."""
+    s = code[k - 1].strip()
+    m = ATTR_PATH.match(s)
+    if not m:
+        return False
+    path = re.sub(r'\s+', '', m[1])
+    if path != 'cfg_attr':
+        return path in COSMETIC_ATTRS
+    end = attr_end(code, k)
+    text = ' '.join(code[i - 1].strip() for i in range(k, (end or k) + 1))
+    args, depth, cur = [], 0, ''
+    for ch in text[text.index('(') + 1:]:
+        if ch in '([':
+            depth += 1
+        elif ch in ')]':
+            if depth == 0:
+                break
+            depth -= 1
+        if ch == ',' and depth == 0:
+            args.append(cur)
+            cur = ''
+        else:
+            cur += ch
+    args.append(cur)
+    added = [re.match(r'\s*([A-Za-z_][A-Za-z0-9_:]*)', a) for a in args[1:] if a.strip()]
+    return bool(added) and all(a and a[1] in COSMETIC_ATTRS for a in added)
+
+
+def lead_of(lines, code, start):
+    """(first, behavioural) for the attributes, comments and blank lines directly
+    above the item on line `start`: `first` is the lead's first line, and
+    `behavioural` the lines of its attributes outside COSMETIC_ATTRS, which
+    belong to the item below; the rest of the lead belongs to no fn. A line
+    holding code beside a comment or attribute (`/* a */ let x = 1;`) ends the
+    lead."""
+    j, behavioural = start - 1, set()
+    while j >= 1:
+        s = code[j - 1].strip()
+        if not s:
+            j -= 1                                # blank, or only comments
+        elif s.endswith(']') and (k := attr_start(code, j)) is not None:
+            if code[k - 1].strip().startswith('#!['):
+                break                             # an inner attribute: it is the enclosing item's
+            if not is_cosmetic(code, k):
+                behavioural.update(range(k, j + 1))
+            j = k - 1
         else:
             break
-    return best
+    return j + 1, frozenset(behavioural)
+
+
+def indent(line):
+    return len(line) - len(line.lstrip())
+
+
+ITEM = re.compile(r'(pub(\([^)]*\))?\s+)?(unsafe\s+)?'
+                  r'(mod|impl|struct|enum|union|trait|const|static|type|use|extern|macro_rules!)\b')
+
+
+def close_of(code, start, name):
+    """Line of the `}` closing the fn `name` declared on line `start`, by brace
+    matching over lexed code (lex()[0]). In the signature `()`, `[]`, `<>` and
+    braces nested in them (`[u8; { 1 }]`, `Foo<{ N }>`) are skipped, so the
+    first `{` outside them opens the body, and a `;` before it ends a bodyless
+    fn. None when the file ends first."""
+    m = re.search(r'\bfn\s+' + re.escape(name) + r'\b', code[start - 1])
+    return block_close(code, start, m.end() if m else 0)
+
+
+def block_close(code, start, pos):
+    """Line of the `}` closing the item whose header starts at column `pos` of
+    line `start` (a fn, impl, mod or trait), or of its `;` when it has no body;
+    None when the file ends first. See close_of."""
+    sig, braces, body, prev = 0, 0, 0, ''
+    for k in range(start, len(code) + 1):
+        for ch in (code[k - 1][pos:] if k == start else code[k - 1]):
+            if body:
+                if ch == '{':
+                    body += 1
+                elif ch == '}':
+                    body -= 1
+                    if not body:
+                        return k
+            elif braces:                          # a const block inside the signature
+                braces += (ch == '{') - (ch == '}')
+            elif ch == '{':
+                if sig:
+                    braces = 1
+                else:
+                    body = 1
+            elif ch in '([<':
+                sig += 1
+            elif ch in ')]' or (ch == '>' and prev not in '-='):
+                sig = max(sig - 1, 0)
+            elif ch == ';' and not sig:
+                return k                          # a bodyless trait or extern fn
+            prev = ch
+    return None
+
+
+def attr_end(code, k):
+    """Last line of the attribute opening on line `k`, or None if it never closes."""
+    depth = 0
+    for j in range(k, len(code) + 1):
+        for ch in code[j - 1]:
+            depth += (ch == '[') - (ch == ']')
+            if depth == 0 and ch == ']':
+                return j
+    return None
+
+
+CONTAINER = re.compile(r'(pub(\([^)]*\))?\s+)?(unsafe\s+)?(impl|mod|trait|extern)\b')
+
+
+def enclosing_attrs(code, fns, spans):
+    """{fn index: lines} for behavioural attributes on an item enclosing a fn: an
+    outer `#[cfg(..)]` on an `impl`, `mod` or `trait` touches every fn in its
+    body, and an inner `#![cfg(..)]` every fn in the block it opens (the whole
+    file at the top). Attributes directly on a fn are lead_of's."""
+    pairs, stack = [], []
+    for k, c in enumerate(code, 1):
+        for ch in c:
+            if ch == '{':
+                stack.append(k)
+            elif ch == '}' and stack:
+                pairs.append((stack.pop(), k))
+    real = [i for i, sp in enumerate(spans) if sp[2] >= sp[1]]
+    fn_lines = {fns[i][0] for i in real}
+    out = defaultdict(set)
+    for k, c in enumerate(code, 1):
+        s = c.strip()
+        if not s.startswith(('#[', '#![')):
+            continue
+        end = attr_end(code, k)
+        if end is None or is_cosmetic(code, k):
+            continue
+        if s.startswith('#!['):
+            around = [p for p in pairs if p[0] < k <= p[1]]
+            lo, hi = max(around) if around else (0, len(code) + 1)
+        else:
+            t = end + 1                           # the item: past further attributes and comments
+            while t <= len(code):
+                st = code[t - 1].strip()
+                if st.startswith('#[') and (e := attr_end(code, t)):
+                    t = e + 1
+                elif not st:
+                    t += 1
+                else:
+                    break
+            if t > len(code) or t in fn_lines or not CONTAINER.match(code[t - 1].strip()):
+                continue                          # a fn's own attribute, or one on a field, variant, struct, ...
+            hi = block_close(code, t, 0)
+            if hi is None:
+                continue
+            lo = t
+        for i in real:
+            if lo < fns[i][0] < hi:
+                out[i].update(range(k, end + 1))
+    return out
+
+
+def ends_of(fns, lines):
+    """(lead, first, last, behavioural) for each fn: its body is [first, last]
+    and [lead, first) is the lead above it, of which only the `behavioural`
+    lines (attributes that can change behaviour: `#[cfg]`, `#[target_feature]`,
+    ...) belong to the fn; `behavioural` also holds the lines of such attributes
+    on an enclosing item (enclosing_attrs). `first` is the fn line and `last` its closing brace
+    (when the braces never balance, the line before the lead of the next item
+    at the fn's indent or shallower, or the end of the file). Comments, blank
+    lines and lint attributes between two fns therefore belong to neither. A
+    `fn` inside a string or comment owns nothing."""
+    code, cont = lex(lines)
+    spans = []
+    for i, (start, name, _) in enumerate(fns):
+        if not re.search(r'\bfn\s+' + re.escape(name) + r'\b', code[start - 1]):
+            spans.append((start, start, start - 1, frozenset()))   # not a real fn: owns nothing
+            continue
+        lead, behavioural = lead_of(lines, code, start)
+        last = close_of(code, start, name)
+        if last is None:
+            base = indent(lines[start - 1])
+            last = len(lines)
+            for k in range(start + 1, len(lines) + 1):
+                s = code[k - 1].strip()
+                if not s or cont[k - 1] or indent(lines[k - 1]) > base:
+                    continue
+                if any(f[0] == k for f in fns[i + 1:]) or ITEM.match(s):
+                    last = lead_of(lines, code, k)[0] - 1
+                    break
+        spans.append((lead, start, max(start, last), behavioural))
+    for i, extra in enclosing_attrs(code, fns, spans).items():
+        lead, first, last, behavioural = spans[i]
+        spans[i] = (lead, first, last, behavioural | extra)
+    return spans
+
+
+def owners(fns, ends, line):
+    """Sorted indices of the fns `line` touches: the innermost fn whose body
+    holds it, unless it is a doc comment or lint attribute above some fn (those
+    belong to no fn, even on a nested fn), plus every fn a behavioural
+    attribute on it applies to. Innermost, so code after a nested fn still
+    belongs to the outer fn."""
+    res, body, cosmetic = set(), None, False
+    for i, (start, _, _) in enumerate(fns):
+        lead, first, last, behavioural = ends[i]
+        if line in behavioural:
+            res.add(i)
+        if lead <= line < first:
+            cosmetic = cosmetic or line not in behavioural
+        elif first <= line <= last and (body is None or start > fns[body][0]):
+            body = i
+    if body is not None and not cosmetic:
+        res.add(body)
+    return sorted(res)
+
+
+def owner(fns, ends, line):
+    """The first of owners(), or None."""
+    res = owners(fns, ends, line)
+    return res[0] if res else None
 
 
 def load_rows(proofs):
@@ -133,6 +447,8 @@ def _analyse(repo, base, head, proofs, base_root, head_root):
             continue
         old_fns = fns_of(proofs, base_root, old_rel) if status[0] != 'A' else []
         new_fns = fns_of(proofs, head_root, new_rel) if status[0] != 'D' else []
+        old_ends = ends_of(old_fns, read_lines(base_root, old_rel))
+        new_ends = ends_of(new_fns, read_lines(head_root, new_rel))
         diff = git(repo, 'diff', '-U0', '-M', base, head, '--', *dict.fromkeys([old_rel, new_rel]))
         touched_new, touched_old = set(), set()
         for l in diff.splitlines():
@@ -141,13 +457,9 @@ def _analyse(repo, base, head, proofs, base_root, head_root):
                 continue
             os_, oc, ns, nc = int(m[1]), int(m[2] or 1), int(m[3]), int(m[4] or 1)
             for ln in range(ns, ns + nc):
-                i = owner(new_fns, ln)
-                if i is not None:
-                    touched_new.add(i)
+                touched_new.update(owners(new_fns, new_ends, ln))
             for ln in range(os_, os_ + oc):   # a pure insertion (-N,0) removes no old line
-                i = owner(old_fns, ln)
-                if i is not None:
-                    touched_old.add(i)
+                touched_old.update(owners(old_fns, old_ends, ln))
         old_names = defaultdict(list)
         for i, (ln, nm, t) in enumerate(old_fns):
             old_names[nm].append(i)
@@ -159,22 +471,27 @@ def _analyse(repo, base, head, proofs, base_root, head_root):
         seen = set()
         for i in sorted(touched_new):
             ln, nm, test = new_fns[i]
-            if test or nm not in old_names:
+            if nm not in old_names:
                 continue
             k = new_names[nm].index(i)
             oi = old_names[nm][min(k, len(old_names[nm]) - 1)]
             seen.add(oi)
+            if test and old_fns[oi][2]:
+                continue                          # a test fn on both sides; a fn made test-only still counts
             r = [x for x in pick(rows.get((old_rel, nm), []), old_fns[oi][0], old_names[nm]) if x['bucket'] in CHECKED]
             if r:
                 changed.append(dict(file=new_rel, fn=nm, line=ln, rows=r))
         for oi in sorted(touched_old - seen):
             ln, nm, test = old_fns[oi]
-            if test or nm not in new_names:
+            if nm not in new_names:
                 continue
             k = old_names[nm].index(oi)
             ni = new_names[nm][min(k, len(new_names[nm]) - 1)]
+            if test and new_fns[ni][2]:
+                continue
             r = [x for x in pick(rows.get((old_rel, nm), []), ln, old_names[nm]) if x['bucket'] in CHECKED]
-            if r and not any(c['fn'] == nm and c['file'] == new_rel for c in changed):
+            if r and not any(c['fn'] == nm and c['file'] == new_rel and c['line'] == new_fns[ni][0]
+                             for c in changed):
                 changed.append(dict(file=new_rel, fn=nm, line=new_fns[ni][0], rows=r))
         for nm, idx in new_names.items():
             extra = len(idx) - len(old_names.get(nm, []))
@@ -187,6 +504,10 @@ def _analyse(repo, base, head, proofs, base_root, head_root):
                         added.append(dict(file=new_rel, fn=nm, line=new_fns[i][0]))
         for nm, idx in old_names.items():
             if len(idx) > len(new_names.get(nm, [])) and rows.get((old_rel, nm)):
+                removed.append(dict(file=old_rel, fn=nm, line=old_fns[idx[0]][0],
+                                    rows=rows[(old_rel, nm)]))
+            elif old_rel != new_rel and rows.get((old_rel, nm)) and not rows.get((new_rel, nm)):
+                # the file moved: its rows still name the old path
                 removed.append(dict(file=old_rel, fn=nm, line=old_fns[idx[0]][0],
                                     rows=rows[(old_rel, nm)]))
     return dict(base=base, head=head, changed=changed, added=added, removed=removed)

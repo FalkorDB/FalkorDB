@@ -29,6 +29,7 @@
 //! - **Aggregate**: Group and aggregate tuples
 //! - **Sort/Skip/Limit**: Order and paginate results
 
+use arcstr::ArcStr;
 pub mod binder;
 mod hop_order;
 pub mod optimizer;
@@ -91,15 +92,15 @@ pub enum IR {
         var: Variable,
     },
     /// CREATE pattern. Boxed: `QueryGraph` is 72 bytes inline.
-    Create(Box<QueryGraph<Arc<String>, Arc<String>, Variable>>),
+    Create(Box<QueryGraph<ArcStr, ArcStr, Variable>>),
     /// MERGE pattern with ON CREATE/ON MATCH actions.
     /// Pattern boxed: with the inline 72-byte `QueryGraph` plus the two
     /// `Vec`s this variant was 120 bytes — the size cap of the whole `IR`
     /// enum, which every plan-tree node carries.
     Merge {
-        pattern: Box<QueryGraph<Arc<String>, Arc<String>, Variable>>,
-        on_create: Vec<SetItem<Arc<String>, Variable>>,
-        on_match: Vec<SetItem<Arc<String>, Variable>>,
+        pattern: Box<QueryGraph<ArcStr, ArcStr, Variable>>,
+        on_create: Vec<SetItem<ArcStr, Variable>>,
+        on_match: Vec<SetItem<ArcStr, Variable>>,
     },
     /// DELETE entities (detach flag for relationships)
     Delete {
@@ -107,32 +108,32 @@ pub enum IR {
         detach: bool,
     },
     /// SET properties/labels
-    Set(Vec<SetItem<Arc<String>, Variable>>),
+    Set(Vec<SetItem<ArcStr, Variable>>),
     /// REMOVE properties/labels
     Remove(Vec<QueryExpr<Variable>>),
     /// Scan all nodes (no label filter)
-    AllNodeScan(Arc<QueryNode<Arc<String>, Variable>>),
+    AllNodeScan(Arc<QueryNode<ArcStr, Variable>>),
     /// Scan nodes by label.
     /// Scan all nodes with a given label.
     NodeByLabelScan {
-        node: Arc<QueryNode<Arc<String>, Variable>>,
+        node: Arc<QueryNode<ArcStr, Variable>>,
     },
     /// Wraps a scan to include pending-created nodes and exclude pending-deleted
     /// nodes. Used inside MERGE match sub-plans so they see in-flight mutations.
     /// The optimizer is free to rewrite the child scan (e.g. to an index scan).
     IncludePending {
-        node: Arc<QueryNode<Arc<String>, Variable>>,
+        node: Arc<QueryNode<ArcStr, Variable>>,
     },
     /// Scan nodes using an index
     NodeByIndexScan {
-        node: Arc<QueryNode<Arc<String>, Variable>>,
-        index: Arc<String>,
+        node: Arc<QueryNode<ArcStr, Variable>>,
+        index: ArcStr,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
     },
     /// Scan edges using an index, replacing CondTraverse when a filter
     /// can be pushed into the edge index.
     EdgeByIndexScan {
-        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        relationship: Arc<QueryRelationship<ArcStr, ArcStr, Variable>>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
         transposed: bool,
     },
@@ -174,19 +175,19 @@ pub enum IR {
     },
     /// Lookup node by label and id
     NodeByLabelAndIdScan {
-        node: Arc<QueryNode<Arc<String>, Variable>>,
+        node: Arc<QueryNode<ArcStr, Variable>>,
         filter: Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     },
     /// Lookup node by id only
     NodeByIdSeek {
-        node: Arc<QueryNode<Arc<String>, Variable>>,
+        node: Arc<QueryNode<ArcStr, Variable>>,
         filter: Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     },
     /// Traverse relationships from known nodes.
     /// `emit_relationship`: when false, anonymous edge optimization applies —
     /// only one row per (src, dst) pair is emitted instead of one per edge.
     CondTraverse {
-        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        relationship: Arc<QueryRelationship<ArcStr, ArcStr, Variable>>,
         emit_relationship: bool,
         /// Alias IDs of other relationship variables in the same MATCH clause
         /// component. Only these are checked for relationship uniqueness.
@@ -199,7 +200,7 @@ pub enum IR {
         /// order. Empty for a single-hop CondTraverse. Each chain hop is an
         /// anonymous-edge, anonymous-intermediate-node traversal — only the
         /// final hop's `to` alias is bound at runtime.
-        chain: Vec<Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>>,
+        chain: Vec<Arc<QueryRelationship<ArcStr, ArcStr, Variable>>>,
         /// When true this traverse carries OPTIONAL MATCH semantics (fused
         /// from an `Optional` wrapper by `fuse_optional_traverse`): input rows
         /// producing no expansion are emitted with the traverse-introduced
@@ -217,7 +218,7 @@ pub enum IR {
     },
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse {
-        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        relationship: Arc<QueryRelationship<ArcStr, ArcStr, Variable>>,
         /// Optional per-hop edge filter absorbed from a WHERE clause by the optimizer.
         edge_filter: Option<QueryExpr<Variable>>,
         /// When false, the path/relationship-list binding (`relationship.alias`)
@@ -235,11 +236,11 @@ pub enum IR {
         expand_into: bool,
     },
     /// All shortest paths between two known nodes
-    AllShortestPaths(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    AllShortestPaths(Arc<QueryRelationship<ArcStr, ArcStr, Variable>>),
     /// Check relationship between two known nodes.
     /// `emit_relationship`: when false, anonymous edge optimization applies.
     ExpandInto {
-        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        relationship: Arc<QueryRelationship<ArcStr, ArcStr, Variable>>,
         emit_relationship: bool,
         /// Alias IDs of other relationship variables in the same MATCH clause
         /// component. Only these are checked for relationship uniqueness.
@@ -317,16 +318,16 @@ pub enum IR {
     },
     /// CREATE INDEX operation
     CreateIndex {
-        label: Arc<String>,
-        attrs: Vec<Arc<String>>,
+        label: ArcStr,
+        attrs: Vec<ArcStr>,
         index_type: IndexType,
         entity_type: EntityType,
         options: Option<QueryExpr<Variable>>,
     },
     /// DROP INDEX operation
     DropIndex {
-        label: Arc<String>,
-        attrs: Vec<Arc<String>>,
+        label: ArcStr,
+        attrs: Vec<ArcStr>,
         index_type: IndexType,
         entity_type: EntityType,
     },
@@ -349,7 +350,7 @@ pub fn subtree_contains(
 /// Unlike the fixed-length traversals the hop range is part of the printed
 /// pattern, and the arrow always points along the traversal direction — an
 /// undirected pattern is still expanded from `from` towards `to`.
-fn fmt_var_len_rel(rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>) -> String {
+fn fmt_var_len_rel(rel: &QueryRelationship<ArcStr, ArcStr, Variable>) -> String {
     use itertools::Itertools;
 
     let alias = &rel.alias;
@@ -377,12 +378,12 @@ fn fmt_var_len_rel(rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>) 
 
 /// Formats a relationship for CondTraverse/ExpandInto display.
 /// Shows node labels and hides anonymous edge aliases.
-fn fmt_rel_with_labels(rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>) -> String {
+fn fmt_rel_with_labels(rel: &QueryRelationship<ArcStr, ArcStr, Variable>) -> String {
     fmt_rel_with_labels_dir(rel, false)
 }
 
 fn fmt_rel_with_labels_dir(
-    rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    rel: &QueryRelationship<ArcStr, ArcStr, Variable>,
     transposed: bool,
 ) -> String {
     use itertools::Itertools;
@@ -395,7 +396,7 @@ fn fmt_rel_with_labels_dir(
         ("", ">")
     };
 
-    let fmt_node = |node: &QueryNode<Arc<String>, Variable>| -> String {
+    let fmt_node = |node: &QueryNode<ArcStr, Variable>| -> String {
         if node.labels.is_empty() {
             node.alias.to_string()
         } else {
@@ -620,7 +621,7 @@ fn split_inline_attrs(
 
 /// Whether an inline-attribute map of `pattern` reads a variable in `visited`.
 fn pattern_attrs_read_visited(
-    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    pattern: &QueryGraph<ArcStr, ArcStr, Variable>,
     visited: &HashSet<VarKey>,
 ) -> bool {
     let reads = |attrs: &QueryExpr<Variable>| {
@@ -646,11 +647,11 @@ fn pattern_attrs_read_visited(
 ///
 /// Returns `None` when no entry has to move.
 fn lift_cross_entity_attrs(
-    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    pattern: &QueryGraph<ArcStr, ArcStr, Variable>,
     visited: &HashSet<VarKey>,
     lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
     lifted_rels: &mut HashSet<VarKey>,
-) -> Option<QueryGraph<Arc<String>, Arc<String>, Variable>> {
+) -> Option<QueryGraph<ArcStr, ArcStr, Variable>> {
     let pending: HashSet<VarKey> = pattern
         .variables()
         .map(|v| v.key())
@@ -660,9 +661,9 @@ fn lift_cross_entity_attrs(
     // The same node is shared by `nodes()` and the endpoints of its
     // relationships; rewrite each occurrence once so its filter is not
     // emitted twice.
-    let mut rewritten: HashMap<*const QueryNode<Arc<String>, Variable>, _> = HashMap::new();
+    let mut rewritten: HashMap<*const QueryNode<ArcStr, Variable>, _> = HashMap::new();
     let mut seen: HashSet<(VarKey, usize)> = HashSet::new();
-    let mut rewrite_node = |node: &Arc<QueryNode<Arc<String>, Variable>>,
+    let mut rewrite_node = |node: &Arc<QueryNode<ArcStr, Variable>>,
                             lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
                             seen: &mut HashSet<(VarKey, usize)>| {
         rewritten
@@ -800,9 +801,7 @@ fn lower_inline_attrs(
 ///
 /// Never call this on a CREATE or MERGE pattern: there `attrs` is the property
 /// template for the entity being built, not a predicate.
-fn strip_node_attrs(
-    node: &Arc<QueryNode<Arc<String>, Variable>>
-) -> Arc<QueryNode<Arc<String>, Variable>> {
+fn strip_node_attrs(node: &Arc<QueryNode<ArcStr, Variable>>) -> Arc<QueryNode<ArcStr, Variable>> {
     if node.attrs.root().num_children() == 0 {
         return node.clone();
     }
@@ -822,8 +821,8 @@ fn strip_node_attrs(
 /// `CondVarLenTraverse` and `AllShortestPaths` prune per edge during the walk.
 /// Which of those the runtime does is decided when operators are built.
 fn strip_rel_attrs(
-    rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
-) -> Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+    rel: &Arc<QueryRelationship<ArcStr, ArcStr, Variable>>
+) -> Arc<QueryRelationship<ArcStr, ArcStr, Variable>> {
     let from = strip_node_attrs(&rel.from);
     let to = strip_node_attrs(&rel.to);
     if rel.attrs.root().num_children() == 0
@@ -851,8 +850,8 @@ fn strip_rel_attrs(
 /// walk cannot express (it would test an assembled path). Only the endpoints'
 /// attrs, which are lowered to Filters, are stripped.
 fn strip_endpoint_attrs(
-    rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
-) -> Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+    rel: &Arc<QueryRelationship<ArcStr, ArcStr, Variable>>
+) -> Arc<QueryRelationship<ArcStr, ArcStr, Variable>> {
     let from = strip_node_attrs(&rel.from);
     let to = strip_node_attrs(&rel.to);
     if Arc::ptr_eq(&from, &rel.from) && Arc::ptr_eq(&to, &rel.to) {
@@ -875,7 +874,7 @@ fn strip_endpoint_attrs(
 /// Build a `hasLabels(var, [label1, label2, ...])` filter expression.
 fn has_labels_filter(
     var: &Variable,
-    labels: &[Arc<String>],
+    labels: &[ArcStr],
 ) -> DynTree<ExprIR<Variable>> {
     let has_labels_fn = get_functions()
         .get("hasLabels", &FnType::Function)
@@ -910,7 +909,7 @@ pub struct Planner {
     /// an already-bound variable that are missing from this set (e.g.
     /// clause-local labels from an OPTIONAL MATCH on a bound alias) must be
     /// re-verified with a hasLabels filter.
-    verified_labels: HashMap<VarKey, OrderSet<Arc<String>>>,
+    verified_labels: HashMap<VarKey, OrderSet<ArcStr>>,
     /// Plans for the `ExprIR::NestedPlan`s minted so far, by id; `finish`
     /// hangs them under the plan's root.
     nested_plans: Vec<DynTree<IR>>,
@@ -932,7 +931,7 @@ struct ExtractedComprehension {
     /// Variable the comprehension's collected list is bound to.
     var: Variable,
     /// Pattern the comprehension iterates over.
-    graph: QueryGraph<Arc<String>, Arc<String>, Variable>,
+    graph: QueryGraph<ArcStr, ArcStr, Variable>,
     /// Optional `WHERE` predicate.
     where_filter: Option<Arc<DynTree<ExprIR<Variable>>>>,
     /// Expression collected for each match.
@@ -1225,7 +1224,7 @@ impl Planner {
     /// Build a pattern sub-plan for a graph, saving and restoring visited state.
     fn build_pattern_sub_plan(
         &mut self,
-        graph: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        graph: &QueryGraph<ArcStr, ArcStr, Variable>,
     ) -> DynTree<IR> {
         let saved = self.visited.clone();
         let saved_verified = self.verified_labels.clone();
@@ -1342,15 +1341,8 @@ impl Planner {
                 let child_mode = mode.descend(node.data());
                 // The loop variables this node binds, and the child from
                 // which on they are in scope (the list itself is not).
-                let (bound, first_scoped): (Vec<Variable>, usize) = match node.data() {
-                    ExprIR::ListComprehension(var) | ExprIR::Quantifier { var, .. } => {
-                        (vec![var.clone()], 1)
-                    }
-                    ExprIR::Reduce(vars) => {
-                        (vec![vars.accumulator.clone(), vars.iterator.clone()], 2)
-                    }
-                    _ => (vec![], usize::MAX),
-                };
+                let (bound, first_scoped) = node.data().loop_vars();
+                let bound: Vec<Variable> = bound.cloned().collect();
                 let mut new_tree = DynTree::new(node.data().clone());
                 for (i, child) in node.children().enumerate() {
                     let outer_len = self.loop_vars.len();
@@ -1676,7 +1668,7 @@ impl Planner {
     fn expr_to_plan(
         &mut self,
         node: &DynNode<ExprIR<Variable>>,
-        inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
+        inline_map: &HashMap<u32, QueryGraph<ArcStr, ArcStr, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
         let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
@@ -1736,7 +1728,7 @@ impl Planner {
     fn or_expr_to_plan(
         &mut self,
         or_node: &DynNode<ExprIR<Variable>>,
-        inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
+        inline_map: &HashMap<u32, QueryGraph<ArcStr, ArcStr, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
         let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
@@ -1802,7 +1794,7 @@ impl Planner {
     fn and_expr_to_plan(
         &mut self,
         and_node: &DynNode<ExprIR<Variable>>,
-        inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
+        inline_map: &HashMap<u32, QueryGraph<ArcStr, ArcStr, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
         let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
@@ -1864,8 +1856,8 @@ impl Planner {
     fn collect_patterns_and_rebuild(
         &mut self,
         node: &DynNode<ExprIR<Variable>>,
-        extractable: &mut Vec<(QueryGraph<Arc<String>, Arc<String>, Variable>, bool)>,
-        inline: &mut HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
+        extractable: &mut Vec<(QueryGraph<ArcStr, ArcStr, Variable>, bool)>,
+        inline: &mut HashMap<u32, QueryGraph<ArcStr, ArcStr, Variable>>,
         can_extract: bool,
     ) -> DynTree<ExprIR<Variable>> {
         match node.data() {
@@ -1959,7 +1951,7 @@ impl Planner {
     fn mark_labels_verified<'l>(
         &mut self,
         var: &Variable,
-        labels: impl Iterator<Item = &'l Arc<String>>,
+        labels: impl Iterator<Item = &'l ArcStr>,
     ) {
         let mut labels = labels.peekable();
         if labels.peek().is_none() {
@@ -1977,8 +1969,8 @@ impl Planner {
     /// (already-bound) variable.
     fn unverified_labels(
         &self,
-        node: &QueryNode<Arc<String>, Variable>,
-    ) -> Vec<Arc<String>> {
+        node: &QueryNode<ArcStr, Variable>,
+    ) -> Vec<ArcStr> {
         let verified = self.verified_labels.get(&node.alias.key());
         node.labels
             .iter()
@@ -1998,7 +1990,7 @@ impl Planner {
     /// know which variables are already available in the stream.
     fn plan_match(
         &mut self,
-        pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        pattern: &QueryGraph<ArcStr, ArcStr, Variable>,
         filter: Option<QueryExpr<Variable>>,
     ) -> DynTree<IR> {
         // Each connected component of the pattern becomes a separate sub-plan.
@@ -2064,10 +2056,10 @@ impl Planner {
             // An endpoint the query constrains (inline attributes, or a WHERE
             // predicate) is a cheap place to start: an index lookup or a short
             // scan rather than every node of a label.
-            let is_constrained = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+            let is_constrained = |n: &Arc<QueryNode<ArcStr, Variable>>| {
                 n.attrs.root().num_children() > 0 || anchor_vars.contains(&n.alias.key())
             };
-            let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+            let anchored = |r: &QueryRelationship<ArcStr, ArcStr, Variable>| {
                 is_constrained(&r.from) || is_constrained(&r.to)
             };
             // A variable-length hop on an anchored endpoint leads the component
@@ -2096,12 +2088,11 @@ impl Planner {
                         && r.all_shortest_paths == AllShortestPaths::No
                         && anchored(r)
                 });
-            let references_variable =
-                |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
-                    [&r.attrs, &r.from.attrs, &r.to.attrs]
-                        .into_iter()
-                        .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
-                };
+            let references_variable = |r: &QueryRelationship<ArcStr, ArcStr, Variable>| {
+                [&r.attrs, &r.from.attrs, &r.to.attrs]
+                    .into_iter()
+                    .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
+            };
             // The WHERE sits above everything the clause plans. Scan selection
             // reads the Filters directly above the component (through its own
             // traversals), so a predicate is only visible to it when the
@@ -2111,18 +2102,18 @@ impl Planner {
             // between). Otherwise only the inline attributes count here.
             let where_visible =
                 single_component && relationships.len() + 1 == component.nodes().len();
-            let scan_score = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+            let scan_score = |n: &Arc<QueryNode<ArcStr, Variable>>| {
                 endpoint_scan_score(
                     n.attrs.root().num_children() > 0
                         || (where_visible && filter_vars.contains(&n.alias.key())),
                     !n.labels.is_empty(),
                 )
             };
-            let is_anchored_end = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+            let is_anchored_end = |n: &Arc<QueryNode<ArcStr, Variable>>| {
                 n.attrs.root().num_children() > 0
                     || (where_visible && anchor_vars.contains(&n.alias.key()))
             };
-            let leads_from_anchor = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+            let leads_from_anchor = |r: &QueryRelationship<ArcStr, ArcStr, Variable>| {
                 let lead = if walk_scans_to_endpoint(scan_score(&r.from), scan_score(&r.to)) {
                     &r.to
                 } else {
@@ -2317,7 +2308,7 @@ impl Planner {
             // emit_relationship: true when the edge must be bound per-edge
             // (named edge or edge referenced in a named path). When false,
             // the runtime may collapse multi-edges into one row per (src, dst).
-            let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
+            let emit_rel = |rel: &QueryRelationship<ArcStr, ArcStr, Variable>| -> bool {
                 !rel.alias.is_unnamed()
                     || lifted_rels.contains(&rel.alias.key())
                     || component
@@ -2838,7 +2829,17 @@ impl Planner {
                 res.node_mut(insert_idx).push_child_tree(chain);
             }
         }
-        if distinct && !matches!(res.root().data(), IR::Aggregate { .. }) {
+        // An Aggregate emits one row per group, so its rows are already
+        // distinct, unless an item mixing an aggregate with other terms
+        // (`count(*) > x`) adds hidden grouping keys: two groups can then
+        // project the same row.
+        let rows_distinct = match res.root().data() {
+            IR::Aggregate { aggregations, .. } => aggregations.iter().all(|(_, expr)| {
+                matches!(expr.root().data(), ExprIR::FuncInvocation(func) if func.is_aggregate())
+            }),
+            _ => false,
+        };
+        if distinct && !rows_distinct {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {
@@ -3549,14 +3550,14 @@ impl Planner {
                 // comprehension's sub-plan runs before the operator it feeds.
                 // So an item with one starts a new Set, fed by the Set holding
                 // the items before it.
-                let has_pattern = |item: &SetItem<Arc<String>, Variable>| match item {
+                let has_pattern = |item: &SetItem<ArcStr, Variable>| match item {
                     SetItem::Attribute { target, value, .. } => {
                         Self::has_pattern_expr(&target.root())
                             || Self::has_pattern_expr(&value.root())
                     }
                     SetItem::Label { .. } => false,
                 };
-                let mut groups: Vec<Vec<SetItem<Arc<String>, Variable>>> = vec![];
+                let mut groups: Vec<Vec<SetItem<ArcStr, Variable>>> = vec![];
                 for item in items {
                     match groups.last_mut() {
                         Some(group) if !has_pattern(&item) => group.push(item),

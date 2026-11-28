@@ -1,23 +1,14 @@
 import AlgoUdf.Neighbors
-/-! # `graph.traverse` (`js_traverse_impl`, udf/js_classes.rs:709-892)
-
-| here | there |
-| --- | --- |
-| `TCfg`              | parsed config :714-750 (`direction`, `types`, `labels`, `returnType`, `maxDepth`; `labelOk n` = the label filter :817-825 for neighbour `n`) |
-| `edgesOf`           | `collect_edges` + the `types` retain :803-812 (`Neighbors.collectEdges`, `applyTypes`) |
-| `TS`                | per-source state: `visited`, `seen_edges` (as `(node, rel)` pairs), `next_frontier`, `edges_to_create` |
-| `visitEdge`         | loop body :814-850 |
-| `level`             | one depth :796-852 |
-| `runLevels`         | `for _ in 0..max_depth` from :788 (deadline checks are an extra `Err` exit, not modelled) |
-| `traverse1`         | one source's inner result array |
+/-! # `graph.traverse` (`js_traverse_impl`, udf/js_classes.rs)
 
 Results:
 * `traverse_nodes_nodup` — node results never repeat and never contain the start.
 * `traverse_both_edges_nodup` — `direction:'both'` edge results never repeat a
   relationship (the `seen_edges` de-dup), given relationship ids identify edges.
-* CONFIRMED divergences from C (live 18900 C / 18901 Rust and `rtest/tests/w5.rs`):
-  `traverse_self_loop_twice` (edges mode returns a self-loop twice: C `[1,0]`,
-  Rust `[1,0,1]`) and `traverse_drops_self_neighbour` (nodes mode omits the start
+* `fixed3084_traverse_self_loop_once` (was `traverse_self_loop_twice`, fixed by #3084 5f147f10e: a
+  self-loop is reported once by `get_node_relationships_by_type`).
+* CONFIRMED divergence from C (live 18900 C / 18901 Rust and `rtest/tests/w5.rs`):
+  `traverse_drops_self_neighbour` (nodes mode omits the start
   even when it is its own neighbour: C `[0,1]`, Rust `[1]`, while Rust's own
   `getNeighbors` gives `[0,1]`).
 -/
@@ -186,7 +177,7 @@ theorem mem_edgesOf_both (es : List E) (c : TCfg) (hd : c.dir = .both) (nid : Na
     · exact (List.mem_filter.mp h).1
   rw [hd] at h'
   simp only [collectEdges, nodeRels, List.mem_append, List.mem_filter, beq_iff_eq] at h'
-  rcases h' with ⟨h1, h2⟩ | ⟨h1, h2⟩
+  rcases h' with ⟨h1, h2⟩ | ⟨⟨h1, h2⟩, _⟩
   · exact ⟨h1, Or.inl h2⟩
   · exact ⟨h1, Or.inr h2⟩
 
@@ -298,9 +289,9 @@ def selfLoopGraph : List E := [⟨0, 0, 1, "R"⟩, ⟨1, 0, 0, "R"⟩, ⟨2, 1, 
 
 def cfg1 (retEdges : Bool) : TCfg := ⟨.outgoing, [], fun _ => true, retEdges, 1⟩
 
-/-- BUG (confirmed): edges mode returns the self-loop e1 twice (C: [1, 0]). -/
-theorem traverse_self_loop_twice :
-    ((traverse1 selfLoopGraph (cfg1 true) 0).2.map (·.id)) = [0, 1, 1] := by decide
+/-- Edges mode lists the self-loop e1 once (#3084). -/
+theorem fixed3084_traverse_self_loop_once :
+    ((traverse1 selfLoopGraph (cfg1 true) 0).2.map (·.id)) = [0, 1] := by decide
 
 /-- BUG (confirmed): nodes mode omits the start although it is its own
 neighbour (C: [0, 1]); `getNeighbors` on the same node gives [1, 0] as a set {0, 1}. -/

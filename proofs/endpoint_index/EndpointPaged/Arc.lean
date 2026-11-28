@@ -26,7 +26,7 @@ def contents {β : Type} (H : Heap β) (v : List Nat) : List β := v.map H.mem
 
 variable {β : Type}
 
-/-- `page_mut(p)` followed by the write `f` (:293-305): `Arc::get_mut` succeeds iff the
+/-- `page_mut(p)` followed by the write `f` (:295-307): `Arc::get_mut` succeeds iff the
 strong count is 1 (no `Weak` exists); otherwise the page is copied into a fresh `Arc`
 (`Arc::from(to_vec())`), the old one loses this pointer, and the copy is written. -/
 def pageMut (H : Heap β) (w : List Nat) (p : Nat) (f : β → β) : Heap β × List Nat :=
@@ -37,7 +37,7 @@ def pageMut (H : Heap β) (w : List Nat) (p : Nat) (f : β → β) : Heap β × 
     ({ mem := upd H.mem b (f (H.mem a)), rc := upd (upd H.rc a (H.rc a - 1)) b 1, next := b + 1 },
      w.set p b)
 
-/-- `Paged::clone` (:156): the page *pointers* are cloned, each count goes up. -/
+/-- `Paged::clone` (:158): the page *pointers* are cloned, each count goes up. -/
 def cloneV (H : Heap β) (w : List Nat) : Heap β := { H with rc := fun a => H.rc a + w.count a }
 
 /-- Dropping a version: each of its pointers releases one count. -/

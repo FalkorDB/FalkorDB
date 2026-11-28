@@ -45,6 +45,7 @@
 //! - `distance()` function for point indexes
 //! - Range indexes only (fulltext indexes are handled separately)
 
+use arcstr::ArcStr;
 use std::sync::Arc;
 
 use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
@@ -70,7 +71,7 @@ use crate::runtime::value::Value;
 /// Build a `hasLabels(variable, [label1, label2, ...])` filter expression.
 fn build_has_labels_filter(
     var: &Variable,
-    labels: impl Iterator<Item = Arc<String>>,
+    labels: impl Iterator<Item = ArcStr>,
 ) -> QueryExpr<Variable> {
     let has_labels_fn = get_functions()
         .get("hasLabels", &FnType::Function)
@@ -85,7 +86,7 @@ fn build_has_labels_filter(
 /// Result of a single-predicate index-scan attempt: the pattern
 /// subject (node or relationship), the label/type the index lives on,
 /// and the query pushed into the index engine.
-type Scan<T> = Option<(T, Arc<String>, IndexQuery<QueryExpr<Variable>>)>;
+type Scan<T> = Option<(T, ArcStr, IndexQuery<QueryExpr<Variable>>)>;
 
 /// Shared interface for the two pattern kinds that can back an index
 /// scan (node labels and relationship types). Every kind-specific
@@ -102,13 +103,13 @@ trait IndexSubject: Clone {
 
     /// All labels/types on the pattern — iterated to find an indexed
     /// label/type match.
-    fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_>;
+    fn all_labels(&self) -> Box<dyn Iterator<Item = &ArcStr> + '_>;
 
     /// Look up the appropriate indexer (node vs edge) on the graph.
     fn is_indexed(
         graph: &Graph,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         ty: IndexType,
     ) -> bool;
 
@@ -117,11 +118,11 @@ trait IndexSubject: Clone {
     /// (no edge-distance path is exercised today).
     fn try_func_scan(
         subject: &Self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
         filter: &DynTree<ExprIR<Variable>>,
         attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         constant_node: DynTree<ExprIR<Variable>>,
-        label: Arc<String>,
+        label: ArcStr,
     ) -> Scan<Self>;
 
     /// Recognize the IR variant that's a candidate for an index scan
@@ -134,7 +135,7 @@ trait IndexSubject: Clone {
     /// (`NodeByIndexScan` or `EdgeByIndexScan`).
     fn build_scan_ir(
         self,
-        index: Arc<String>,
+        index: ArcStr,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
         metadata: Self::Metadata,
     ) -> IR;
@@ -144,34 +145,34 @@ trait IndexSubject: Clone {
     /// `types[0]` as the index key and post-filter the rest.
     fn with_primary_label(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> Self;
 }
 
-impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
+impl IndexSubject for Arc<QueryNode<ArcStr, Variable>> {
     type Metadata = ();
 
     fn alias(&self) -> &Variable {
         &self.alias
     }
-    fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_> {
+    fn all_labels(&self) -> Box<dyn Iterator<Item = &ArcStr> + '_> {
         Box::new(self.labels.iter())
     }
     fn is_indexed(
         graph: &Graph,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         ty: IndexType,
     ) -> bool {
         graph.is_indexed(label, attr, &ty)
     }
     fn try_func_scan(
         subject: &Self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
         filter: &DynTree<ExprIR<Variable>>,
         attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         constant_node: DynTree<ExprIR<Variable>>,
-        label: Arc<String>,
+        label: ArcStr,
     ) -> Scan<Self> {
         try_distance_index_scan(subject, attr, filter, attr_side, constant_node, label)
     }
@@ -186,7 +187,7 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
     }
     fn build_scan_ir(
         self,
-        index: Arc<String>,
+        index: ArcStr,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
         _metadata: (),
     ) -> IR {
@@ -198,7 +199,7 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
     }
     fn with_primary_label(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> Self {
         let mut reordered = OrderSet::default();
         reordered.insert(label.clone());
@@ -215,30 +216,30 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
     }
 }
 
-impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+impl IndexSubject for Arc<QueryRelationship<ArcStr, ArcStr, Variable>> {
     type Metadata = bool; // transposed
 
     fn alias(&self) -> &Variable {
         &self.alias
     }
-    fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_> {
+    fn all_labels(&self) -> Box<dyn Iterator<Item = &ArcStr> + '_> {
         Box::new(self.types.iter())
     }
     fn is_indexed(
         graph: &Graph,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         ty: IndexType,
     ) -> bool {
         graph.is_edge_indexed(label, attr, &ty)
     }
     fn try_func_scan(
         _subject: &Self,
-        _attr: &Arc<String>,
+        _attr: &ArcStr,
         _filter: &DynTree<ExprIR<Variable>>,
         _attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         _constant_node: DynTree<ExprIR<Variable>>,
-        _label: Arc<String>,
+        _label: ArcStr,
     ) -> Scan<Self> {
         None
     }
@@ -273,7 +274,7 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
     }
     fn build_scan_ir(
         self,
-        _index: Arc<String>,
+        _index: ArcStr,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
         transposed: bool,
     ) -> IR {
@@ -285,7 +286,7 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
     }
     fn with_primary_label(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> Self {
         let mut reordered = Vec::with_capacity(self.types.len());
         reordered.push(label.clone());
@@ -313,7 +314,7 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
 /// (attr, constant) pair. Used by both node and edge index-scan paths
 /// once the subject has resolved its label/type.
 fn build_op_query(
-    attr: &Arc<String>,
+    attr: &ArcStr,
     op: &ExprIR<Variable>,
     constant_node: DynTree<ExprIR<Variable>>,
 ) -> Option<IndexQuery<QueryExpr<Variable>>> {
@@ -361,7 +362,7 @@ fn bare_property_of(
     tree: &DynTree<ExprIR<Variable>>,
     idx: NodeIdx<Dyn<ExprIR<Variable>>>,
     alias: &Variable,
-) -> Option<Arc<String>> {
+) -> Option<ArcStr> {
     let mut node = tree.node(idx);
     while matches!(node.data(), ExprIR::Paren) {
         node = node.get_child(0)?;
@@ -379,7 +380,7 @@ fn bare_property_of(
 fn extract_attribute_from_subtree(
     tree: &DynTree<ExprIR<Variable>>,
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-) -> Option<Arc<String>> {
+) -> Option<ArcStr> {
     for idx in tree.node(root_idx).indices::<Bfs>() {
         let node = tree.node(idx);
         if let ExprIR::Property(attr) = node.data() {
@@ -399,7 +400,7 @@ fn extract_attribute_and_expression_from_filter(
     filter: &DynTree<ExprIR<Variable>>,
     target_alias: Option<&Variable>,
 ) -> Option<(
-    Arc<String>,
+    ArcStr,
     NodeIdx<Dyn<ExprIR<Variable>>>,
     NodeIdx<Dyn<ExprIR<Variable>>>,
 )> {
@@ -441,13 +442,13 @@ fn extract_attribute_and_expression_from_filter(
 
 /// Builds an index scan for a distance filter (e.g. `distance(n.loc, point(...)) < 100`).
 fn try_distance_index_scan(
-    node: &Arc<QueryNode<Arc<String>, Variable>>,
-    attr: &Arc<String>,
+    node: &Arc<QueryNode<ArcStr, Variable>>,
+    attr: &ArcStr,
     filter: &DynTree<ExprIR<Variable>>,
     attribute_side: NodeIdx<Dyn<ExprIR<Variable>>>,
     constant_node: DynTree<ExprIR<Variable>>,
-    label: Arc<String>,
-) -> Scan<Arc<QueryNode<Arc<String>, Variable>>> {
+    label: ArcStr,
+) -> Scan<Arc<QueryNode<ArcStr, Variable>>> {
     let operand = filter.root().data();
     // distance() must be on the "less than" side of the comparison:
     // distance(...) < x  or  distance(...) <= x  (attribute_side == child(0))
@@ -733,7 +734,7 @@ fn try_single_filter_scan<T: IndexSubject>(
 /// any conjuncts that couldn't be indexed and must stay as a reduced
 /// post-filter.
 type FilterPushdown = (
-    Arc<String>,
+    ArcStr,
     IndexQuery<QueryExpr<Variable>>,
     Vec<DynTree<ExprIR<Variable>>>,
 );
@@ -756,7 +757,7 @@ fn try_filter_pushdown<T: IndexSubject>(
 ) -> Option<FilterPushdown> {
     match filter.root().data() {
         ExprIR::And => {
-            let mut merged: Option<(Arc<String>, IndexQuery<QueryExpr<Variable>>)> = None;
+            let mut merged: Option<(ArcStr, IndexQuery<QueryExpr<Variable>>)> = None;
             let mut remaining = Vec::new();
             for child in filter.root().children() {
                 let conjunct = child.clone_as_tree();
@@ -781,7 +782,7 @@ fn try_filter_pushdown<T: IndexSubject>(
         }
         ExprIR::Or => {
             let mut or_queries = Vec::new();
-            let mut or_label: Option<Arc<String>> = None;
+            let mut or_label: Option<ArcStr> = None;
             for child in filter.root().children() {
                 let branch = child.clone_as_tree();
                 if let Some((_, label, q)) = try_single_filter_scan(subject, &branch, graph) {
@@ -808,6 +809,35 @@ fn try_filter_pushdown<T: IndexSubject>(
             }
         }),
     }
+}
+
+/// Whether `utilize_index` can serve `filter`, a predicate on `node`, from a
+/// range index of the graph.
+pub(super) fn can_seek_index(
+    node: &Arc<QueryNode<ArcStr, Variable>>,
+    filter: &DynTree<ExprIR<Variable>>,
+    graph: &Graph,
+) -> bool {
+    try_filter_pushdown(node, filter, graph).is_some()
+}
+
+/// The label whose range index `utilize_index` would serve `filter` from, a
+/// predicate on `node`; `None` when no index serves it.
+pub(super) fn seek_index_label(
+    node: &Arc<QueryNode<ArcStr, Variable>>,
+    filter: &DynTree<ExprIR<Variable>>,
+    graph: &Graph,
+) -> Option<ArcStr> {
+    if matches!(filter.root().data(), ExprIR::Or) {
+        // One lookup answers every disjunct, so they must share a label.
+        let mut labels = filter
+            .root()
+            .children()
+            .map(|c| seek_index_label(node, &c.clone_as_tree(), graph));
+        let first = labels.next()??;
+        return labels.all(|l| l.as_ref() == Some(&first)).then_some(first);
+    }
+    try_filter_pushdown(node, filter, graph).map(|(label, _, _)| label)
 }
 
 /// Whether `filter` is `value IN subject.prop` (array-contains): a predicate the index answers
@@ -992,7 +1022,7 @@ fn match_scan_with_filter<T: IndexSubject>(
 /// label/type as the index's primary and post-filter the rest.
 fn reorder_subject_labels<T: IndexSubject>(
     subject: T,
-    index_label: &Arc<String>,
+    index_label: &ArcStr,
 ) -> T {
     if subject
         .all_labels()
@@ -1013,7 +1043,7 @@ fn apply_filter_pushdown<T: IndexSubject>(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
     subject: T,
-    index: Arc<String>,
+    index: ArcStr,
     query: IndexQuery<QueryExpr<Variable>>,
     remaining: Vec<DynTree<ExprIR<Variable>>>,
     original_filter: &QueryExpr<Variable>,
@@ -1172,12 +1202,10 @@ pub(super) fn utilize_index(
     graph: &Graph,
 ) {
     rewrite_until_stable(optimized_plan, |plan, idx| {
-        try_index_rewrite::<Arc<QueryNode<Arc<String>, Variable>>>(plan, idx, graph)
+        try_index_rewrite::<Arc<QueryNode<ArcStr, Variable>>>(plan, idx, graph)
     });
     rewrite_until_stable(optimized_plan, |plan, idx| {
-        try_index_rewrite::<Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>>(
-            plan, idx, graph,
-        )
+        try_index_rewrite::<Arc<QueryRelationship<ArcStr, ArcStr, Variable>>>(plan, idx, graph)
     });
     rewrite_until_stable(optimized_plan, prune_all_node_scan_child);
     rewrite_until_stable(optimized_plan, add_to_labels_filter);

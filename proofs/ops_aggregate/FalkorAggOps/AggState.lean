@@ -1,9 +1,9 @@
 import FalkorAggOps.AggPlan
 /-
-Aggregate operator state: accumulator zeroing / unbinding, `GroupKey` Eq/Hash,
-`args_for`, `new` (graph/src/runtime/ops/aggregate.rs); `hash_u64` is history (removed by #2977).
-Table in `AggPlan.lean`. An environment is `Nat → Option Z` (slot ↦ bound value);
-`Row::insert` = `upd`, `Row::unbind` = `clr`.
+Aggregate operator state: accumulator zeroing, `GroupKey` Eq/Hash,
+`args_for`, `new` (graph/src/runtime/ops/aggregate.rs).
+An environment is `Nat → Option Z` (slot ↦ bound value);
+`Row::insert` = `upd`.
 -/
 namespace FalkorAggOps.AggPlan
 
@@ -11,7 +11,6 @@ variable {Z : Type}
 
 abbrev Env (Z : Type) := Nat → Option Z
 def upd (env : Env Z) (k : Nat) (z : Z) : Env Z := fun j => if j = k then some z else env j
-def clr (env : Env Z) (k : Nat) : Env Z := fun j => if j = k then none else env j
 
 -- The outermost aggregate calls of a tree, pre-order (no descent into an aggregate).
 mutual
@@ -24,7 +23,7 @@ def outerL : List (Ex Z) → List (Fn Z × List (Ex Z))
   | e :: es => outer e ++ outerL es
 end
 
-/-! ## `set_agg_expr_zero` (aggregate.rs:1099) — `none` = the `unreachable!()` / underflow panic -/
+/-! ## `set_agg_expr_zero` (aggregate.rs) — `none` = the `unreachable!()` / underflow panic -/
 
 mutual
 def setZero : Ex Z → Env Z → Option (Env Z)
@@ -113,120 +112,9 @@ theorem setZero_spec (e : Ex Z) (env : Env Z) (hw : AccWF (outer e)) :
   rw [setZero_eq]
   exact ⟨rfl, foldlM_stepZ_ok _ env hw (outer_agg e)⟩
 
-/-! ## `unbind_agg_accumulators` (aggregate.rs:1251) -/
+/-! ## `GroupKey` (aggregate.rs `eq`, `hash`) -/
 
-mutual
-def unbindAcc : Ex Z → Env Z → Env Z
-  | .func f cs, env =>
-    if f.init.isSome then
-      if 2 ≤ cs.length then
-        match cs.getLast? with
-        | some (.var k) => clr env k
-        | _ => env
-      else env
-    else unbindAccL cs env
-  | .var _, env | .const _, env => env
-  | .prop _ cs, env | .distinct cs, env | .other cs, env => unbindAccL cs env
-def unbindAccL : List (Ex Z) → Env Z → Env Z
-  | [], env => env
-  | e :: es, env => unbindAccL es (unbindAcc e env)
-end
-
-def stepU (env : Env Z) (p : Fn Z × List (Ex Z)) : Env Z :=
-  if 2 ≤ p.2.length then
-    match p.2.getLast? with
-    | some (.var k) => clr env k
-    | _ => env
-  else env
-
-def accIs : Option (Ex Z) → Nat → Bool
-  | some (.var k), j => k == j
-  | _, _ => false
-
-theorem accIs_iff (o : Option (Ex Z)) (j : Nat) : accIs o j = true ↔ o = some (.var j) := by
-  cases o with
-  | none => simp [accIs]
-  | some x => cases x <;> simp [accIs]
-
-theorem stepU_apply (e : Env Z) (p : Fn Z × List (Ex Z)) (j : Nat) :
-    stepU e p j = if 2 ≤ p.2.length ∧ accIs p.2.getLast? j = true then none else e j := by
-  unfold stepU
-  by_cases h2 : 2 ≤ p.2.length
-  · simp only [h2, ite_true, true_and]
-    cases hl : p.2.getLast? with
-    | none => simp [accIs]
-    | some x =>
-      cases x <;> simp [accIs]
-      rename_i k
-      simp only [clr]
-      by_cases hj : j = k <;> simp [hj]
-      intro h; exact absurd h.symm hj
-  · simp [h2]
-
-mutual
-theorem unbindAcc_eq : ∀ (e : Ex Z) (env : Env Z), unbindAcc e env = (outer e).foldl stepU env
-  | .func f cs, env => by
-      unfold unbindAcc outer
-      cases h : f.init.isSome
-      · simp [unbindAccL_eq cs env]
-      · simp [stepU]
-  | .var _, _ => rfl
-  | .const _, _ => rfl
-  | .prop _ cs, env => by simp [unbindAcc, outer, unbindAccL_eq cs env]
-  | .distinct cs, env => by simp [unbindAcc, outer, unbindAccL_eq cs env]
-  | .other cs, env => by simp [unbindAcc, outer, unbindAccL_eq cs env]
-theorem unbindAccL_eq : ∀ (es : List (Ex Z)) (env : Env Z), unbindAccL es env = (outerL es).foldl stepU env
-  | [], _ => rfl
-  | e :: es, env => by
-      simp only [unbindAccL, outerL, List.foldl_append, unbindAcc_eq e env, unbindAccL_eq es]
-end
-
-/-- Every slot `set_agg_expr_zero` wrote is unbound again by `unbind_agg_accumulators`,
-provided every outermost aggregate has an argument besides its accumulator (true of every
-parsed call: `count(*)` is `count(1)`, cypher.rs:2023). Other slots are untouched. -/
-theorem unbind_after_zero (l : List (Fn Z × List (Ex Z))) (env : Env Z) (k : Nat)
-    (h2 : ∀ p ∈ l, 2 ≤ p.2.length) (hk : ∃ p ∈ l, p.2.getLast? = some (.var k)) :
-    l.foldl stepU env k = none := by
-  induction l generalizing env with
-  | nil => simp at hk
-  | cons p ps ih =>
-    simp only [List.foldl_cons]
-    rcases hk with ⟨q, hq, hqk⟩
-    rcases List.mem_cons.mp hq with rfl | hq'
-    · have hc : stepU env q k = none := by
-        rw [stepU_apply]; simp [h2 q (List.mem_cons_self ..), hqk, accIs]
-      have keep : ∀ (l : List (Fn Z × List (Ex Z))) (e : Env Z), e k = none → l.foldl stepU e k = none := by
-        intro l; induction l with
-        | nil => intro e he; exact he
-        | cons r rs ihr =>
-          intro e he; apply ihr
-          rw [stepU_apply]; split <;> simp_all
-      exact keep ps _ hc
-    · exact ih _ (fun r hr => h2 r (List.mem_cons_of_mem _ hr)) ⟨q, hq', hqk⟩
-
-theorem unbind_other (l : List (Fn Z × List (Ex Z))) (env : Env Z) (k : Nat)
-    (hk : ∀ p ∈ l, p.2.getLast? ≠ some (.var k)) : l.foldl stepU env k = env k := by
-  induction l generalizing env with
-  | nil => rfl
-  | cons p ps ih =>
-    simp only [List.foldl_cons]
-    rw [ih _ (fun r hr => hk r (List.mem_cons_of_mem _ hr))]
-    have hp := hk p (List.mem_cons_self ..)
-    have : accIs p.2.getLast? k = false := by
-      cases h : accIs p.2.getLast? k
-      · rfl
-      · exact absurd ((accIs_iff _ _).mp h) hp
-    rw [stepU_apply]; simp [this]
-
-/-- Latent asymmetry: a one-child aggregate call (accumulator only) is zeroed but never
-unbound — its accumulator would leak downstream. No parsed call has that shape. -/
-theorem one_child_not_unbound (f : Fn Z) (z : Z) (k : Nat) (env : Env Z) (hf : f.init = some z) :
-    unbindAcc (.func f [.var k]) env = env ∧ setZero (.func f [.var k]) env = some (upd env k z) := by
-  simp [unbindAcc, setZero, hf]
-
-/-! ## `GroupKey` (aggregate.rs:99 `eq`, :114 `hash`) -/
-
-/-- `GroupKey::eq` (aggregate.rs:99): same length and pairwise `veq`; on main (#2917
+/-- `GroupKey::eq` (aggregate.rs): same length and pairwise `veq`; on main (#2917
 7fdf06a0e) `veq a b` is `a.sort_cmp(b) == Equal` (before: `Value::eq`). Instantiated in
 `Discharge.lean`. -/
 def gkEq (veq : Z → Z → Bool) : List Z → List Z → Bool
@@ -275,22 +163,7 @@ theorem gkHash_consistent {S : Type} (veq : Z → Z → Bool) (hv : S → Z → 
       rw [hc st x y h.1]
       exact ih _ ys h.2
 
-/-! ## `hash_u64` (history: aggregate.rs:1254 trait decl, :1258 `impl HashU64 for Row` at ca36bfa15;
-removed by #2977, c652e505e: the group id is the insertion index, see `GroupId.lean`) -/
-
-/-- `FxHasher::default()`, `self.hash(&mut hasher)`, `hasher.finish()`. -/
-def hashU64 {R S : Type} (fxDefault : S) (rowHash : S → R → S) (finish : S → Nat) (r : R) : Nat :=
-  finish (rowHash fxDefault r)
-
-/-- `hash_u64` depends only on the row's `Hash` input: rows feeding the same
-`(key, value)` sequence get the same group id. (It is not injective — the
-collision bug was fixed by #2977.) -/
-theorem hashU64_spec {R S : Type} (d : S) (rh : S → R → S) (fin : S → Nat) (r₁ r₂ : R)
-    (heq : rh d r₁ = rh d r₂) : hashU64 d rh fin r₁ = hashU64 d rh fin r₂ ∧
-    hashU64 d rh fin r₁ = fin (rh d r₁) := by
-  simp [hashU64, heq]
-
-/-! ## `VectorizableAgg::args_for` (aggregate.rs:222) -/
+/-! ## `VectorizableAgg::args_for` (aggregate.rs) -/
 
 def argsFor (vt vd : List Z → Except String Unit) (value : Z) (extra : List Z) :
     Except String (List Z) := do
@@ -312,7 +185,7 @@ theorem argsFor_spec (vt vd : List Z → Except String Unit) (v : Z) (extra : Li
   cases h1 : vt (v :: extra) <;> cases h2 : vd (v :: extra) <;>
     simp [h1, h2, bind, Except.bind, pure, Except.pure]
 
-/-! ## `AggregateOp::new` (aggregate.rs:294) -/
+/-! ## `AggregateOp::new` (aggregate.rs) -/
 
 structure AggSt (C E G A : Type) (Z : Type) where
   child : Option C

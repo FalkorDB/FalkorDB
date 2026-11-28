@@ -62,6 +62,7 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
+use arcstr::ArcStr;
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
@@ -210,15 +211,15 @@ pub struct Runtime<'a> {
     /// do its own match-or-create.
     pub merge_pattern_cache: RefCell<HashMap<(NodeIdx<Dyn<IR>>, u64), Vec<(u32, Value)>>>,
     /// Pointer-identity memo of resolved node attribute ids. Plan
-    /// expressions hold the same `Arc<String>` across all rows, so after
+    /// expressions hold the same `ArcStr` across all rows, so after
     /// the first resolution a lookup is a short pointer scan instead of a
     /// string hash + equality probe. Entries hold the `Arc` so a memoized
     /// address can never be freed and recycled by a different name
     /// mid-query. Capped so per-row computed keys can't grow it unboundedly.
-    node_attr_id_memo: RefCell<Vec<(Arc<String>, u16)>>,
+    node_attr_id_memo: RefCell<Vec<(ArcStr, u16)>>,
     /// Relationship-space counterpart of `node_attr_id_memo` (the two id
     /// spaces are independent).
-    rel_attr_id_memo: RefCell<Vec<(Arc<String>, u16)>>,
+    rel_attr_id_memo: RefCell<Vec<(ArcStr, u16)>>,
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
     /// Effects buffer built before commit, for replication.
@@ -442,6 +443,41 @@ impl ReturnNames for DynNode<'_, IR> {
             _ => vec![],
         }
     }
+}
+
+/// The smallest integer `i` in `i64::MIN..=i64::MAX + 1` whose `f64` image is
+/// not below `f`, or `i64::MAX + 1` when none is.
+///
+/// The `Filter` a seek replaces compares an integer id with a float by first
+/// casting the id to `f64`, which is exact up to 2^53 and rounds beyond it, so
+/// the cast is searched (it is monotonic) rather than `f.ceil()` assumed.
+fn first_id_where(reached: impl Fn(f64) -> bool) -> i128 {
+    let (mut lo, mut hi) = (i128::from(i64::MIN), i128::from(i64::MAX) + 1);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if reached(mid as f64) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    lo
+}
+
+/// The smallest id `i` with `(i as f64) >= f`.
+fn first_id_ge(f: f64) -> i128 {
+    if f.abs() < 9_007_199_254_740_992.0 {
+        return f.ceil() as i128;
+    }
+    first_id_where(|x| x >= f)
+}
+
+/// The largest id `i` with `(i as f64) <= f`.
+fn last_id_le(f: f64) -> i128 {
+    if f.abs() < 9_007_199_254_740_992.0 {
+        return f.floor() as i128;
+    }
+    first_id_where(|x| x > f) - 1
 }
 
 impl<'a> Runtime<'a> {
@@ -1441,65 +1477,58 @@ impl<'a> Runtime<'a> {
         }
     }
 
+    /// Narrow the id range `[0, max_node_id]` by every `id(n) <op> expr`
+    /// conjunct the optimizer folded into a seek, or `None` when no id can
+    /// satisfy them all.
+    ///
+    /// The seek must return exactly the rows the `Filter` it replaced would
+    /// keep, so each bound follows Cypher's comparison of an integer id:
+    /// a negative bound is simply below every id (`id(n) > -1` keeps them
+    /// all, `id(n) <= -1` none), a float compares numerically (`id(n) = 1.0`
+    /// is node 1, `id(n) > 1.5` starts at 2), and a null, NaN or
+    /// non-numeric bound never compares true, so no row survives.
     pub fn evaluate_id_filter<R: super::row::RowView + ?Sized>(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
-        // Bound the seek by where the id space ends, not by `max_node_id`.
-        // `max_node_id` is 0 both when id 0 is the only id and when no id was
-        // ever handed out, so it would make an empty graph seek a node 0 that
-        // does not exist. With an empty id space `max` is 0 here, and the
-        // `node_count() == 0` check below returns no ids once every predicate
-        // has been type-checked.
-        let mut max = self.graph().node_id_bound().saturating_sub(1);
-        let mut min = 0u64;
+        // Inclusive bounds, widened to i128 so that any `i64` and any finite
+        // float fit; `±inf` saturates, and the `± 1` below saturates with it.
+        // Bound the seek by where the id space ends, not by `max_node_id`,
+        // which is 0 both when id 0 is the only id and when no id was ever
+        // handed out. With an empty id space `max` is 0 here, and the
+        // `node_count() == 0` check below returns no ids.
+        let mut min = 0i128;
+        let mut max = i128::from(self.graph().node_id_bound().saturating_sub(1));
         for (expr, op) in filter {
-            let id = match {
-                let this = &self;
+            let value = {
                 let idx = expr.root().idx();
-                super::eval::ExprEval::from_runtime(this).eval(expr, idx, Some(vars), None)
-            }? {
-                Value::Int(id) => id as u64,
-                _ => {
-                    return Err(String::from("Node ID must be an integer"));
-                }
+                super::eval::ExprEval::from_runtime(self).eval(expr, idx, Some(vars), None)
+            }?;
+            // The smallest id `>=` and the largest id `<=` the bound, so that a
+            // non-integer bound turns every operator into an integer one:
+            // `id > 1.5` is `id >= 2`, `id <= 1.5` is `id <= 1`, and
+            // `id = 1.5` has no solution because `ceil > floor`.
+            let (ceil, floor) = match value {
+                Value::Int(id) => (i128::from(id), i128::from(id)),
+                Value::Float(f) if !f.is_nan() => (first_id_ge(f), last_id_le(f)),
+                _ => return Ok(None),
             };
             match op {
                 ExprIR::Eq => {
-                    if id < min || id > max {
-                        return Ok(None);
-                    }
-                    min = id;
-                    max = id;
+                    min = min.max(ceil);
+                    max = max.min(floor);
                 }
-                ExprIR::Gt => {
-                    if id >= max {
-                        return Ok(None);
-                    }
-                    min = std::cmp::max(min, id + 1);
-                }
-                ExprIR::Ge => {
-                    if id > max {
-                        return Ok(None);
-                    }
-                    min = std::cmp::max(min, id);
-                }
-                ExprIR::Lt => {
-                    if id <= min {
-                        return Ok(None);
-                    }
-                    max = std::cmp::min(max, id - 1);
-                }
-                ExprIR::Le => {
-                    if id < min {
-                        return Ok(None);
-                    }
-                    max = std::cmp::min(max, id);
-                }
+                ExprIR::Gt => min = min.max(floor.saturating_add(1)),
+                ExprIR::Ge => min = min.max(ceil),
+                ExprIR::Lt => max = max.min(ceil.saturating_sub(1)),
+                ExprIR::Le => max = max.min(floor),
                 _ => {
                     unreachable!()
                 }
+            }
+            if min > max {
+                return Ok(None);
             }
         }
         // No live nodes means nothing to seek, including the case where ids
@@ -1507,8 +1536,9 @@ impl<'a> Runtime<'a> {
         if self.graph().node_count() == 0 {
             return Ok(None);
         }
+        // `0 <= min <= max < node_id_bound`, so both fit in a `u64`.
         let mut result = RoaringTreemap::new();
-        result.insert_range(min..=max);
+        result.insert_range(min as u64..=max as u64);
         Ok(Some(result))
     }
 
@@ -1517,7 +1547,7 @@ impl<'a> Runtime<'a> {
     pub(crate) fn set_pending_node_attr(
         &self,
         id: NodeId,
-        key: &Arc<String>,
+        key: &ArcStr,
         value: Value,
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
@@ -1536,7 +1566,7 @@ impl<'a> Runtime<'a> {
     pub(crate) fn set_pending_relationship_attr(
         &self,
         id: RelationshipId,
-        key: &Arc<String>,
+        key: &ArcStr,
         value: Value,
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
@@ -1551,18 +1581,18 @@ impl<'a> Runtime<'a> {
     }
 
     fn memo_lookup(
-        memo: &RefCell<Vec<(Arc<String>, u16)>>,
-        attr: &Arc<String>,
+        memo: &RefCell<Vec<(ArcStr, u16)>>,
+        attr: &ArcStr,
     ) -> Option<u16> {
         memo.borrow()
             .iter()
-            .find(|(name, _)| Arc::ptr_eq(name, attr))
+            .find(|(name, _)| ArcStr::ptr_eq(name, attr))
             .map(|&(_, id)| id)
     }
 
     fn memo_insert(
-        memo: &RefCell<Vec<(Arc<String>, u16)>>,
-        attr: &Arc<String>,
+        memo: &RefCell<Vec<(ArcStr, u16)>>,
+        attr: &ArcStr,
         id: u16,
     ) {
         let mut memo = memo.borrow_mut();
@@ -1578,7 +1608,7 @@ impl<'a> Runtime<'a> {
     fn node_attr_id(
         &self,
         g: &Graph,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<u16> {
         if let Some(id) = Self::memo_lookup(&self.node_attr_id_memo, attr) {
             return Some(id);
@@ -1592,7 +1622,7 @@ impl<'a> Runtime<'a> {
     fn rel_attr_id(
         &self,
         g: &Graph,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<u16> {
         if let Some(id) = Self::memo_lookup(&self.rel_attr_id_memo, attr) {
             return Some(id);
@@ -1605,7 +1635,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attribute(
         &self,
         id: NodeId,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<Value> {
         let deleted = self.deleted_nodes.borrow();
         if !deleted.is_empty()
@@ -1625,7 +1655,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attribute_no_delete_check(
         &self,
         id: NodeId,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<Value> {
         let g = self.graph();
         let attr_id = self.node_attr_id(&g, attr)?;
@@ -1639,7 +1669,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_attribute_no_delete_check(
         &self,
         id: RelationshipId,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<Value> {
         let g = self.graph();
         let attr_id = self.rel_attr_id(&g, attr)?;
@@ -1656,7 +1686,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_attribute(
         &self,
         id: RelationshipId,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<Value> {
         let deleted = self.deleted_relationships.borrow();
         if !deleted.is_empty()
@@ -1688,7 +1718,7 @@ impl<'a> Runtime<'a> {
     pub fn materialize_node_property(
         &self,
         node_ids: &[NodeId],
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> (Column, NullBitmap) {
         classify_column(self.materialize_node_property_values(node_ids, attr))
     }
@@ -1702,7 +1732,7 @@ impl<'a> Runtime<'a> {
     pub fn materialize_node_property_values(
         &self,
         node_ids: &[NodeId],
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Vec<Value> {
         let g = self.graph();
         let attr_idx = self.node_attr_id(&g, attr);
@@ -1750,7 +1780,7 @@ impl<'a> Runtime<'a> {
     pub fn materialize_relationship_property(
         &self,
         rel_ids: &[RelationshipId],
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> (Column, NullBitmap) {
         classify_column(self.materialize_relationship_property_values(rel_ids, attr))
     }
@@ -1762,7 +1792,7 @@ impl<'a> Runtime<'a> {
     pub fn materialize_relationship_property_values(
         &self,
         rel_ids: &[RelationshipId],
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Vec<Value> {
         let g = self.graph();
         let attr_idx = self.rel_attr_id(&g, attr);
@@ -1821,7 +1851,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_labels(
         &self,
         id: NodeId,
-    ) -> OrderSet<Arc<String>> {
+    ) -> OrderSet<ArcStr> {
         let g = self.graph();
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             return dn.labels.iter().map(|l| g.get_label_by_id(*l)).collect();
@@ -1842,7 +1872,7 @@ impl<'a> Runtime<'a> {
     /// the committed label matrix.
     ///
     /// `n:Person` reaches the runtime as a `hasLabels` call, and answering it
-    /// through `get_node_labels` costs two `OrderSet`s and an `Arc<String>`
+    /// through `get_node_labels` costs two `OrderSet`s and an `ArcStr`
     /// clone per stored label, then compares label *names*, for every row. On
     /// the benchmark graph `MATCH (n) WHERE n:Person RETURN count(n)` spent
     /// 48.9M instructions over 15k nodes — 3.3k a row — against 22.4M on the C
@@ -1900,7 +1930,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> OrderMap<ArcStr, Value> {
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             let attrs = dn
                 .attrs
@@ -1918,7 +1948,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> OrderMap<ArcStr, Value> {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
             let attrs = dr
                 .attrs
@@ -1951,7 +1981,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_type(
         &self,
         id: RelationshipId,
-    ) -> Option<Arc<String>> {
+    ) -> Option<ArcStr> {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
             return Some(dr.type_name.clone());
         }
@@ -1982,7 +2012,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_indegree_by_type(
         &self,
         id: NodeId,
-        types: &[Arc<String>],
+        types: &[ArcStr],
     ) -> usize {
         if self.deleted_nodes.borrow().contains_key(&id)
             || self.pending.borrow().is_node_deleted(id)
@@ -2017,7 +2047,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_outdegree_by_type(
         &self,
         id: NodeId,
-        types: &[Arc<String>],
+        types: &[ArcStr],
     ) -> usize {
         if self.deleted_nodes.borrow().contains_key(&id)
             || self.pending.borrow().is_node_deleted(id)
@@ -2041,7 +2071,7 @@ impl<'a> Runtime<'a> {
 /// approximation.
 pub fn map_to_index_options(
     index_type: &IndexType,
-    kv_map: &OrderMap<Arc<String>, Value>,
+    kv_map: &OrderMap<ArcStr, Value>,
 ) -> Result<Option<IndexOptions>, String> {
     let get = |key: &str| -> Option<&Value> {
         kv_map
@@ -2150,9 +2180,20 @@ pub fn map_to_index_options(
                 }
             };
             // Required and case-insensitive, as in C (`strcasecmp`); stored
-            // lowercase, the form the rest of the engine matches on.
+            // lowercase, the form the rest of the engine matches on. An
+            // unknown name is refused here, whatever the dimension: the index
+            // build only reads it once the dimension is non-zero. `ip` is a
+            // Rust extension; C knows only euclidean and cosine.
             let similarity_function = match get("similarityFunction") {
-                Some(Value::String(s)) => Some(s.to_ascii_lowercase()),
+                Some(Value::String(s)) => {
+                    let lower = s.to_ascii_lowercase();
+                    if !matches!(lower.as_str(), "euclidean" | "cosine" | "ip") {
+                        return Err(format!(
+                            "Invalid vector index configuration: unknown similarityFunction '{s}', expected 'euclidean', 'cosine' or 'ip'"
+                        ));
+                    }
+                    Some(lower)
+                }
                 None => {
                     return Err(
                         "Invalid vector index configuration: similarityFunction is required".into(),
@@ -2209,5 +2250,27 @@ pub fn map_to_index_options(
                 ef_runtime,
             })))
         }
+    }
+}
+
+#[cfg(test)]
+mod id_bound_tests {
+    use super::{first_id_ge, last_id_le};
+
+    #[test]
+    fn float_bounds_follow_the_f64_cast_of_the_id() {
+        // Below 2^53 the cast is exact: plain ceil / floor.
+        assert_eq!((first_id_ge(1.5), last_id_le(1.5)), (2, 1));
+        assert_eq!((first_id_ge(-1.5), last_id_le(-1.5)), (-1, -2));
+        assert_eq!((first_id_ge(3.0), last_id_le(3.0)), (3, 3));
+        // 2^53 + 1 rounds to 2^53 (ties to even), so both ids equal 2^53.0.
+        let b = 9_007_199_254_740_992_i128;
+        assert_eq!((first_id_ge(b as f64), last_id_le(b as f64)), (b, b + 1));
+        assert_ne!((b - 1) as f64, b as f64);
+        // Infinities saturate past every id.
+        assert_eq!(first_id_ge(f64::INFINITY), i128::from(i64::MAX) + 1);
+        assert_eq!(last_id_le(f64::INFINITY), i128::from(i64::MAX));
+        assert_eq!(first_id_ge(f64::NEG_INFINITY), i128::from(i64::MIN));
+        assert_eq!(last_id_le(f64::NEG_INFINITY), i128::from(i64::MIN) - 1);
     }
 }

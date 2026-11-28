@@ -146,14 +146,36 @@ const PAGE_SLOTS: usize = 4096;
 /// per-graph footprint, on a server that may hold thousands of small graphs, in
 /// exchange for a win that only appears on large ones. Sizing the tail removes
 /// that floor and keeps the bound, because the copy is still one page.
-type Page<T> = Arc<[(T, T)]>;
+type Page<S> = Arc<[S]>;
 
-struct Paged<T> {
-    pages: Vec<Page<T>>,
+/// What a page holds: an endpoint pair for the width tiers, a type id for the
+/// type column. Each has a value reserved to mean "no edge here".
+trait Slot: Copy {
+    const EMPTY: Self;
+}
+
+impl<T: Endpoint> Slot for (T, T) {
+    const EMPTY: Self = (T::EMPTY, T::EMPTY);
+}
+
+/// A relationship type id. `u16::MAX` marks an empty slot, so a graph can hold
+/// up to 65,535 relationship types.
+impl Slot for u16 {
+    const EMPTY: Self = NO_TYPE;
+}
+
+/// The type column's empty marker.
+const NO_TYPE: u16 = u16::MAX;
+
+/// The largest relationship type id the type column can store.
+pub const MAX_TYPE_ID: usize = u16::MAX as usize - 1;
+
+struct Paged<S> {
+    pages: Vec<Page<S>>,
     len: usize,
 }
 
-impl<T> Clone for Paged<T> {
+impl<S> Clone for Paged<S> {
     /// Clones the page *pointers*, not the slots — the point of the type.
     fn clone(&self) -> Self {
         Self {
@@ -163,7 +185,7 @@ impl<T> Clone for Paged<T> {
     }
 }
 
-impl<T> Default for Paged<T> {
+impl<S> Default for Paged<S> {
     fn default() -> Self {
         Self {
             pages: Vec::new(),
@@ -177,11 +199,11 @@ impl<T> Default for Paged<T> {
 /// `Arc<[_]>` rather than `Arc<Vec<_>>` so the slots live *inline* in the `Arc`
 /// allocation: a `Vec` behind an `Arc` costs the read path a second dependent
 /// load to reach them, and a bounds check against a length it also has to load.
-fn empty_page<T: Endpoint>(slots: usize) -> Page<T> {
-    Arc::from(vec![(T::EMPTY, T::EMPTY); slots])
+fn empty_page<S: Slot>(slots: usize) -> Page<S> {
+    Arc::from(vec![S::EMPTY; slots])
 }
 
-impl<T: Endpoint> Paged<T> {
+impl<S: Slot> Paged<S> {
     const fn len(&self) -> usize {
         self.len
     }
@@ -194,17 +216,17 @@ impl<T: Endpoint> Paged<T> {
     fn at(
         &self,
         at: usize,
-    ) -> (T, T) {
+    ) -> S {
         self.pages[at / PAGE_SLOTS][at % PAGE_SLOTS]
     }
 
-    fn iter(&self) -> impl Iterator<Item = (T, T)> + '_ {
+    fn iter(&self) -> impl Iterator<Item = S> + '_ {
         (0..self.len).map(|i| self.at(i))
     }
 
     /// Bytes actually allocated, tail page included at its real length.
     fn allocated_bytes(&self) -> usize {
-        self.pages.iter().map(|p| p.len()).sum::<usize>() * size_of::<(T, T)>()
+        self.pages.iter().map(|p| p.len()).sum::<usize>() * size_of::<S>()
     }
 
     /// Bytes the *used* slots occupy, which is what a per-edge figure wants.
@@ -213,15 +235,15 @@ impl<T: Endpoint> Paged<T> {
     /// `[u8; 3]` and so alignment 1, and a field type that gained alignment
     /// would otherwise make `GRAPH.MEMORY` drift silently.
     const fn used_bytes(&self) -> usize {
-        self.len * size_of::<(T, T)>()
+        self.len * size_of::<S>()
     }
 
     /// Replace `page` with a longer one, empty past what it already held.
     fn regrow(
-        page: &mut Page<T>,
+        page: &mut Page<S>,
         slots: usize,
     ) {
-        let mut next = vec![(T::EMPTY, T::EMPTY); slots];
+        let mut next = vec![S::EMPTY; slots];
         let held = page.len().min(slots);
         next[..held].copy_from_slice(&page[..held]);
         *page = Arc::from(next);
@@ -233,7 +255,7 @@ impl<T: Endpoint> Paged<T> {
     /// re-checked the page count for every element of a tier it had already
     /// sized. Filling each page from the iterator instead makes promotion one
     /// `extend` per page.
-    fn from_slots<I: Iterator<Item = (T, T)>>(
+    fn from_slots<I: Iterator<Item = S>>(
         mut it: I,
         len: usize,
     ) -> Self {
@@ -241,7 +263,7 @@ impl<T: Endpoint> Paged<T> {
         let mut left = len;
         while left > 0 {
             let n = left.min(PAGE_SLOTS);
-            let mut page: Vec<(T, T)> = Vec::with_capacity(n);
+            let mut page: Vec<S> = Vec::with_capacity(n);
             page.extend(it.by_ref().take(n));
             debug_assert_eq!(page.len(), n, "iterator shorter than the stated length");
             pages.push(Arc::from(page));
@@ -295,7 +317,7 @@ impl<T: Endpoint> Paged<T> {
     fn page_mut(
         &mut self,
         at: usize,
-    ) -> &mut [(T, T)] {
+    ) -> &mut [S] {
         let p = at / PAGE_SLOTS;
         if Arc::get_mut(&mut self.pages[p]).is_none() {
             self.pages[p] = Arc::from(self.pages[p].to_vec());
@@ -317,7 +339,7 @@ impl<T: Endpoint> Paged<T> {
 /// tiers are history and are not touched. Holding each behind its own `Arc`
 /// means a version clones only the tier it writes to, and the history stays
 /// shared.
-type Tier<T> = Option<Arc<Paged<T>>>;
+type Tier<T> = Option<Arc<Paged<(T, T)>>>;
 
 /// `edge_id -> (src, dst)`, split into contiguous id ranges by field width.
 ///
@@ -330,6 +352,12 @@ pub struct EndpointIndex {
     w24: Tier<U24>,
     w32: Tier<u32>,
     w64: Tier<u64>,
+    /// `edge_id -> relationship type id`, indexed by edge id directly (no
+    /// tiers: the width does not depend on the endpoints). Two bytes per edge
+    /// slot, where the `edge × type` GraphBLAS matrix it replaces cost a row
+    /// pointer and a column index per edge (~9.5 B measured). Shared and
+    /// copied per page like the tiers.
+    types: Option<Arc<Paged<u16>>>,
 }
 
 /// Move every slot of `from` to the front of `into`, re-emitting empty slots as
@@ -337,7 +365,7 @@ pub struct EndpointIndex {
 /// something else at the new width.
 fn promote<A: Endpoint, B: Endpoint>(
     from: &mut Tier<A>,
-    into: &mut Paged<B>,
+    into: &mut Paged<(B, B)>,
 ) {
     let Some(old) = from.take() else { return };
     // Reuse the buffer when this version owns it outright; a version that still
@@ -427,11 +455,42 @@ impl EndpointIndex {
     /// Bytes held, for `GRAPH.MEMORY`.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        let mut n = 0;
+        let mut n = self.types.as_ref().map_or(0, |t| t.allocated_bytes());
         each_tier!(self, |v| {
             n += v.as_ref().map_or(0, |v| v.allocated_bytes());
         });
         n
+    }
+
+    /// The relationship type id of `edge_id`, or `None` if the slot is empty,
+    /// deleted, or past the end. Per-row read path: one page lookup.
+    #[must_use]
+    pub fn get_type(
+        &self,
+        edge_id: u64,
+    ) -> Option<u16> {
+        let types = self.types.as_ref()?;
+        let slot = usize::try_from(edge_id).ok()?;
+        if slot >= types.len() {
+            return None;
+        }
+        let t = types.at(slot);
+        (t != NO_TYPE).then_some(t)
+    }
+
+    /// Make the type column address at least `len` edge ids.
+    fn grow_types(
+        &mut self,
+        len: usize,
+    ) {
+        let types = Arc::make_mut(self.types.get_or_insert_with(Arc::default));
+        if len > types.len {
+            types
+                .pages
+                .reserve_exact(len.div_ceil(PAGE_SLOTS).saturating_sub(types.pages.len()));
+            types.ensure_pages(len);
+            types.len = len;
+        }
     }
 
     /// Mean bytes per stored slot, which is the quantity the tiering is for.
@@ -534,6 +593,7 @@ impl EndpointIndex {
             }
         });
         self.resize_tier(rank, want);
+        self.grow_types(needed);
     }
 
     fn tier_len(
@@ -623,6 +683,9 @@ impl EndpointIndex {
                 v.grow_to(n);
             });
         }
+        if len > 0 {
+            self.grow_types(len);
+        }
     }
 
     /// The tier holding `slot` and its offset within that tier, or `None` if
@@ -643,14 +706,20 @@ impl EndpointIndex {
         None
     }
 
-    /// Record `edge_id`'s endpoints, promoting and growing as needed.
+    /// Record `edge_id`'s endpoints and relationship type, promoting and
+    /// growing as needed.
     pub fn set(
         &mut self,
         edge_id: u64,
         src: u64,
         dst: u64,
+        type_id: u16,
     ) {
         let slot = usize::try_from(edge_id).expect("edge id exceeds usize");
+        debug_assert_ne!(type_id, NO_TYPE, "type id collides with the empty marker");
+        self.grow_types(slot + 1);
+        let types = Arc::make_mut(self.types.as_mut().expect("grown above"));
+        types.page_mut(slot)[slot % PAGE_SLOTS] = type_id;
         let needed = Self::rank_for(src.max(dst));
         match self.locate(slot) {
             // A reused id whose new endpoints no longer fit its tier. Promoting
@@ -701,6 +770,11 @@ impl EndpointIndex {
         if let Some((rank, at)) = self.locate(slot) {
             self.with_tier(rank, |v| v.vacate(at));
         }
+        if let Some(types) = self.types.as_mut()
+            && slot < types.len()
+        {
+            Arc::make_mut(types).page_mut(slot)[slot % PAGE_SLOTS] = NO_TYPE;
+        }
     }
 }
 
@@ -730,7 +804,7 @@ trait TierOps {
     );
 }
 
-impl<T: Endpoint> TierOps for Paged<T> {
+impl<T: Endpoint> TierOps for Paged<(T, T)> {
     fn grow_to(
         &mut self,
         len: usize,
@@ -794,7 +868,7 @@ mod tests {
             (u64::from(u32::MAX), 16.0),
         ] {
             let mut ix = EndpointIndex::default();
-            ix.set(0, id, id);
+            ix.set(0, id, id, 0);
             assert!(
                 (ix.bytes_per_edge() - want).abs() < f64::EPSILON,
                 "tier for id {id}: {} != {want}",
@@ -811,7 +885,7 @@ mod tests {
     fn early_edges_keep_their_narrow_tier() {
         let mut ix = EndpointIndex::default();
         for e in 0..1000u64 {
-            ix.set(e, e, e + 1);
+            ix.set(e, e, e + 1, 0);
         }
         assert!(
             (ix.bytes_per_edge() - 4.0).abs() < f64::EPSILON,
@@ -820,7 +894,7 @@ mod tests {
 
         // Now the graph outgrows u16. The early thousand must not be repacked.
         for e in 1000..2000u64 {
-            ix.set(e, 100_000 + e, 100_001 + e);
+            ix.set(e, 100_000 + e, 100_001 + e, 0);
         }
         let mean = ix.bytes_per_edge();
         assert!(
@@ -840,11 +914,11 @@ mod tests {
     fn reusing_a_low_id_with_wide_endpoints_promotes_and_preserves() {
         let mut ix = EndpointIndex::default();
         for e in 0..100u64 {
-            ix.set(e, e, e + 1);
+            ix.set(e, e, e + 1, 0);
         }
         ix.clear(50);
         // id 7 is reused for an edge needing three bytes
-        ix.set(7, 1 << 20, (1 << 20) + 3);
+        ix.set(7, 1 << 20, (1 << 20) + 3, 0);
 
         assert_eq!(ix.get(7), Some((1 << 20, (1 << 20) + 3)));
         assert_eq!(ix.get(50), None, "tombstone lost across a promotion");
@@ -857,17 +931,17 @@ mod tests {
     #[test]
     fn promotion_preserves_pairs_and_tombstones_at_every_tier() {
         let mut ix = EndpointIndex::default();
-        ix.set(0, 1, 2);
-        ix.set(1, 3, 4);
+        ix.set(0, 1, 2, 0);
+        ix.set(1, 3, 4, 0);
         ix.clear(1);
-        ix.set(2, 300, 400);
+        ix.set(2, 300, 400, 0);
 
         for (id, src, dst) in [
             (3u64, 70_000u64, 4u64),
             (4, 1 << 25, 5),
             (5, 1 << 33, (1 << 34) + 7),
         ] {
-            ix.set(id, src, dst);
+            ix.set(id, src, dst, 0);
             assert_eq!(ix.get(0), Some((1, 2)), "pair lost at ({src}, {dst})");
             assert_eq!(ix.get(1), None, "tombstone lost at ({src}, {dst})");
             assert_eq!(ix.get(2), Some((300, 400)));
@@ -882,20 +956,20 @@ mod tests {
         // Grown incrementally: 1000 narrow edges, then 1000 wide ones.
         let mut grown = EndpointIndex::default();
         for e in 0..1000u64 {
-            grown.set(e, e, e + 1);
+            grown.set(e, e, e + 1, 0);
         }
         for e in 1000..2000u64 {
-            grown.set(e, 100_000 + e, 100_001 + e);
+            grown.set(e, 100_000 + e, 100_001 + e, 0);
         }
 
         // Restored: the boundary is the first edge id needing the wider tier.
         let mut restored = EndpointIndex::default();
         restored.prepare_tiers([1000, 2000, 2000], 2000);
         for e in 0..1000u64 {
-            restored.set(e, e, e + 1);
+            restored.set(e, e, e + 1, 0);
         }
         for e in 1000..2000u64 {
-            restored.set(e, 100_000 + e, 100_001 + e);
+            restored.set(e, 100_000 + e, 100_001 + e, 0);
         }
 
         assert_eq!(restored.len(), grown.len());
@@ -917,7 +991,7 @@ mod tests {
         let mut ix = EndpointIndex::default();
         ix.prepare_tiers([10, 5, 0], 20);
         for e in 0..20u64 {
-            ix.set(e, e, 1 << 20);
+            ix.set(e, e, 1 << 20, 0);
         }
         assert_eq!(ix.len(), 20);
         for e in 0..20u64 {
@@ -929,7 +1003,7 @@ mod tests {
     #[test]
     fn gaps_read_as_absent() {
         let mut ix = EndpointIndex::default();
-        ix.set(5, 7, 8);
+        ix.set(5, 7, 8, 0);
         assert_eq!(ix.get(0), None);
         assert_eq!(ix.get(4), None);
         assert_eq!(ix.get(5), Some((7, 8)));
@@ -950,11 +1024,11 @@ mod tests {
         let mut prepared = EndpointIndex::default();
         prepared.prepare(9, 1 << 25);
         for &(e, s, d) in &triples {
-            prepared.set(e, s, d);
+            prepared.set(e, s, d, 0);
         }
         let mut plain = EndpointIndex::default();
         for &(e, s, d) in &triples {
-            plain.set(e, s, d);
+            plain.set(e, s, d, 0);
         }
         assert_eq!(prepared.len(), plain.len());
         for e in 0..plain.len() as u64 {
@@ -981,7 +1055,7 @@ mod tests {
     }
 
     /// Endpoint values chosen to sit exactly on the tier boundaries, where the
-    /// empty-slot sentinel of each width lives. `65_535` is `u16::EMPTY`, so an
+    /// empty-slot sentinel of each width lives. `65_535` is `NO_TYPE`, so an
     /// edge with that endpoint must be held one tier wider or it would read
     /// back as a deleted slot.
     const BOUNDARIES: [u64; 8] = [
@@ -1034,7 +1108,7 @@ mod tests {
                             [((r >> 40) % 4) as usize];
                         ((r >> 3) % cap, (r >> 25) % cap)
                     };
-                    ix.set(id, src, dst);
+                    ix.set(id, src, dst, 0);
                     if model.len() <= id as usize {
                         model.resize(id as usize + 1, None);
                     }
@@ -1085,7 +1159,7 @@ mod tests {
         let n = u64::try_from(PAGE_SLOTS * 2 + 37).unwrap();
         let mut ix = EndpointIndex::default();
         for e in 0..n {
-            ix.set(e, e % 60_000, (e + 1) % 60_000);
+            ix.set(e, e % 60_000, (e + 1) % 60_000, 0);
         }
         // A tombstone in the first page and one past the boundary, so the
         // empty-slot carry is exercised on both sides of it.
@@ -1095,7 +1169,7 @@ mod tests {
 
         // Reusing a low id with endpoints too wide for `u16` promotes the
         // whole tier into `u32`, rewriting every slot at the new width.
-        ix.set(1, 5_000_000_000, 5_000_000_001);
+        ix.set(1, 5_000_000_000, 5_000_000_001, 0);
 
         assert_eq!(ix.get(1), Some((5_000_000_000, 5_000_000_001)));
         assert_eq!(ix.get(5), None, "tombstone before the page boundary");
@@ -1123,11 +1197,11 @@ mod tests {
         for edges in [1_u64, 10, 100] {
             let mut ix = EndpointIndex::default();
             for e in 0..edges {
-                ix.set(e, e % 60_000, (e + 1) % 60_000);
+                ix.set(e, e % 60_000, (e + 1) % 60_000, 0);
             }
-            // 4 bytes a slot in the `u16` tier, so the used bytes are the floor
-            // and a doubling tail is the ceiling.
-            let used = usize::try_from(edges).unwrap() * 4;
+            // 4 bytes a slot in the `u16` tier plus 2 for the type, so the used
+            // bytes are the floor and a doubling tail is the ceiling.
+            let used = usize::try_from(edges).unwrap() * 6;
             let allocated = ix.memory_usage();
             assert!(
                 allocated < 4 * used.max(64),
@@ -1139,13 +1213,51 @@ mod tests {
         // pages then, so allocation tracks the edges rather than the page size.
         let mut ix = EndpointIndex::default();
         for e in 0..50_000u64 {
-            ix.set(e, e % 60_000, (e + 1) % 60_000);
+            ix.set(e, e % 60_000, (e + 1) % 60_000, 0);
         }
         let allocated = ix.memory_usage();
         assert!(
-            (200_000..280_000).contains(&allocated),
-            "50k edges at 4 bytes a slot allocated {allocated} bytes"
+            (300_000..420_000).contains(&allocated),
+            "50k edges at 6 bytes a slot allocated {allocated} bytes"
         );
+    }
+
+    #[test]
+    fn types_round_trip_and_clear_with_the_endpoints() {
+        let mut ix = EndpointIndex::default();
+        ix.prepare(9, 100);
+        for e in 0..10u64 {
+            ix.set(e, e, e + 1, u16::try_from(e % 3).unwrap());
+        }
+        for e in 0..10u64 {
+            assert_eq!(ix.get_type(e), Some(u16::try_from(e % 3).unwrap()));
+        }
+        ix.clear(4);
+        assert_eq!(ix.get(4), None);
+        assert_eq!(ix.get_type(4), None);
+        assert_eq!(ix.get_type(10), None, "past the end");
+        // A reused id takes its new type.
+        ix.set(4, 1, 2, 7);
+        assert_eq!(ix.get_type(4), Some(7));
+        // The largest storable type id is not the empty marker.
+        let top = u16::try_from(super::MAX_TYPE_ID).unwrap();
+        ix.set(11, 1, 2, top);
+        assert_eq!(ix.get_type(11), Some(top));
+    }
+
+    #[test]
+    fn a_type_written_after_a_snapshot_leaves_the_snapshot_alone() {
+        let mut base = EndpointIndex::default();
+        for e in 0..10_000u64 {
+            base.set(e, e % 60_000, (e + 1) % 60_000, 1);
+        }
+        let snapshot = base.clone();
+        base.set(5, 1, 2, 2);
+        base.clear(6);
+        assert_eq!(snapshot.get_type(5), Some(1));
+        assert_eq!(snapshot.get_type(6), Some(1));
+        assert_eq!(base.get_type(5), Some(2));
+        assert_eq!(base.get_type(6), None);
     }
 
     /// The whole point, as a bound rather than a benchmark: the first write
@@ -1159,7 +1271,7 @@ mod tests {
     fn a_version_that_writes_one_edge_copies_one_page() {
         let mut ix = EndpointIndex::default();
         for e in 0..200_000u64 {
-            ix.set(e, e % 60_000, (e + 1) % 60_000);
+            ix.set(e, e % 60_000, (e + 1) % 60_000, 0);
         }
         let before = ix.w16_page_ids();
         assert!(
@@ -1172,7 +1284,7 @@ mod tests {
         // reaches `Arc::make_mut` with a refcount above one — the deep-copy
         // case this type exists to bound.
         let mut version = ix.clone();
-        version.set(0, 1, 2);
+        version.set(0, 1, 2, 0);
 
         let after = version.w16_page_ids();
         assert_eq!(after.len(), before.len(), "a write should not add pages");
@@ -1214,7 +1326,7 @@ mod cow_bench {
         let edges = 10_000_000u64;
         let mut ix = EndpointIndex::default();
         for e in 0..edges {
-            ix.set(e, e % 60_000, (e + 1) % 60_000);
+            ix.set(e, e % 60_000, (e + 1) % 60_000, 0);
         }
 
         // Sequential: every page pointer is used 4096 times in a row.
@@ -1287,10 +1399,10 @@ mod cow_bench {
             let mut ix = EndpointIndex::default();
             let narrow = edges * 9 / 10;
             for e in 0..narrow {
-                ix.set(e, e % 60_000, (e + 1) % 60_000);
+                ix.set(e, e % 60_000, (e + 1) % 60_000, 0);
             }
             for e in narrow..edges {
-                ix.set(e, 100_000 + e % 1000, 100_001 + e % 1000);
+                ix.set(e, 100_000 + e % 1000, 100_001 + e % 1000, 0);
             }
 
             // What a write transaction actually pays: take a version (the
@@ -1302,7 +1414,7 @@ mod cow_bench {
             let i0 = read_instr();
             for e in 0..reps {
                 let mut version = ix.clone();
-                version.set(edges + e, 1, 2);
+                version.set(edges + e, 1, 2, 0);
                 std::hint::black_box(&version);
             }
             let i1 = read_instr();

@@ -17,7 +17,7 @@ User-facing behaviour that depends on it:
 - query timeouts and the memory cap;
 - index `OPTIONS` validation (vector `dimension`/`similarityFunction`, fulltext keys).
 
-The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`RuntimeCore.lean`](RuntimeCore.lean), and each file under `RuntimeCore/` starts with its own table. This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv), and each file under `RuntimeCore/` starts with its own table. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -37,7 +37,7 @@ The project also proves what a correct budget looks like. `need` is the smallest
 
 **2. Does the emitter lose, duplicate or reorder rows?**
 
-No. `drive_flatten` and `fresh_drive` prove that the batches an emitter-driven operator yields, concatenated, are exactly the per-row expansions of every input row, in order, **for any initial `record_cap`**. For the emitter, the budget is only a batch-size hint, which is why the same `record_cap` is harmless there and harmful as a hard stop in traversals. The pack ceiling stays in `[1, 1024]` (`ceiling_bounds`), the emitter makes progress whenever work is left (`loop_progress`), and `reset` drops all queued work (`reset_remaining`).
+No. `drive_flatten` and `fresh_drive` prove that the batches an emitter-driven operator yields, concatenated, are exactly the per-row expansions of every input row, in order, **for any initial `record_cap`**. For the emitter, the budget is only a batch-size hint, which is why the same `record_cap` is harmless there and harmful as a hard stop in traversals. The pack ceiling stays in `[1, 1024]` (`ceiling_bounds`, `emit_ceiling_bounds`); the operator's priming `emit_lazy`, before any batch is installed, leaves it untouched, so the first real batch holds at most the `record_cap` hint (`emit_unseeded`, `primed_first_batch`); the emitter makes progress whenever work is left (`loop_progress`), and `reset` drops all queued work (`reset_remaining`).
 
 **3. Does `resultset_size` return the right rows, and do writes still run?**
 
@@ -65,8 +65,6 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 | `runBatch_eq_rec` | The iterative post-order `run_batch` builds the same tree, with the same first error, as the recursive build, for every plan | `RunBatch.lean` |
 | `query_rows`, `query_write_pulls_all` | `resultset_size` keeps exactly the first `n` rows; a write query always drains the root operator (every batch plus the terminating `next()`), so a root `CommitOp` always runs | `Query.lean` |
 | `graph_deref`, `graph_same_result`, `graph_mut_write_same` | #3436's `Runtime::graph()`, `graph_mut()`, `GraphRef`, `Deref` on an atomic_refcell borrow-word model: the rewrite changes no result and no borrow-word effect | `Cell.lean` |
-| `held_survives`, `drop_sound`, `g_never_reassigned` | `HeldRead` / `Runtime` drop order, `graph_arc()`, `g` never reassigned | `DropOrder.lean` |
-| `reader_guard_sound`, `priv_borrows_owner_only` | The read-guard protocol over `MvccGraph` and `QuerySession`; the open #3439 `writer_reply_race` | `Protocol.lean` |
 | `read_plan_no_update`, `accessor_unchanged`, `materialize_unchanged` | A read plan has no updating operator (from `redis_layer`'s `RedisLayer.Ro`), so the accessor theorems transfer through `graph()` | `Reuse.lean` |
 | `attrs_agree`, `materialize_eq` | `properties(n).k`, `n.k` and the bulk column read agree | `Accessors.lean` |
 | `hasLabelId_iff`, `hasLabel_iff` | `n:L` is exactly `L ∈ labels(n)`, by id or by name | `Accessors.lean` |
@@ -85,24 +83,17 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 
 ## Bugs found
 
-Each bug has a Rust repro test (`graph/tests/lean_runtime_core.rs`, run locally and not committed) and was compared against C. See [`../FINDINGS.md`](../FINDINGS.md), wave 3.
+Each bug was compared against C. The live repro for B1/B2 is `repro_limit.py PORT` (the Rust test file `graph/tests/lean_runtime_core.rs` no longer exists on main). See [`../FINDINGS.md`](../FINDINGS.md), wave 3.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | B1 (W3-runtime-1) | `hard_cap_unsound_expandInto`, `hard_cap_unsound_condTraverse`, `hard_cap_unsound_through_traverse` | `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`), which then use it as a hard stop. `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` returns `[]` (C: `[2]`) | **Open** (walk unchanged at 0f45a8685) |
 | B2 (W3-runtime-2) | `hard_cap_unsound_stacked_skip` | `effective_skip` returns only the first `SKIP`. `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1` returns `[]` (C: `[20]`) | **Open**. The proposed fix for B1 and B2 is to give hard-cap consumers `need` and keep `record_cap` for the emitter |
 | B3 | *(same shape as B1; no separate theorem)* | SortOp's top-k uses the same walk: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1` returns `[]`; expected `[20]` | **Open**, shared with C. The stacked-SKIP Sort variant is #2659 |
-| — | `reuse_diverges` | With a node id in both pending attribute maps, `n.a` and `properties(n)` disagree. Only reachable through deleted-id reuse | Part of open #2876 (W2-pending-1) |
+| — | `Accessors.reuse_diverges` | With a node id present in both pending attribute maps, `n.a` falls through `new_nodes_attrs` to `existing_nodes_attrs` while `properties(n)` reads only `new_nodes_attrs`. Only reachable via deleted-id reuse (#2876), where `deleted_nodes` shadows both anyway | Suspected |
 | — | `checkMem_wrap` | `usage_fn() as i64` wraps at 2⁶³, so the memory cap never fires past 8 EiB | Latent |
 
-**CONDITIONAL rows (9).** The attribute accessors are proven under contracts of the graph stores that this project doesn't model:
-
-- `hc`: the committed "all attributes" listing agrees with the by-index read;
-- `hbg`: the batch read equals the per-id read;
-- `hName`: the by-name relationship read equals `attr_id` followed by the by-index read;
-- `hdisj`: a node is in at most one pending attribute map.
-
-`hdisj` is **false under #2876** (`reuse_diverges`). These rows are `get_node_attribute`, `get_node_attribute_no_delete_check`, `get_relationship_attribute`, `materialize_node_property(_values)`, `materialize_relationship_property(_values)`, `get_node_attrs` and `get_relationship_attrs`. `expr_semantics`' `eval_batch` rows depend on `materialize_eq`, so they are CONDITIONAL too.
+**CONDITIONAL rows (4).** `get_node_attribute`, `get_node_attribute_no_delete_check`, `get_node_attrs` and `get_relationship_attrs` are proven under two facts about the pending attribute maps: `hdisj` (a node is in at most one pending attribute map) and `huniq` (each staged list has distinct keys). `proofs/pending_commit` proves both for every reachable `Pending` state (`PendingCommit/AttrInv.lean` `PA.inv_hdisj`, `PA.inv_huniq`; `AccessorBridge.lean` instantiates these accessors' theorems with them). The rows stay CONDITIONAL because that proof assumes SET/REMOVE only stage attributes on a live entity, the deleted-entity guard `proofs/ops_apply` proves, and the two are not linked. The store contracts `hc`, `hbg` and `hName` are discharged in `Discharge.lean`.
 
 ## Files
 
@@ -112,9 +103,7 @@ Each bug has a Rust repro test (`graph/tests/lean_runtime_core.rs`, run locally 
 | `Emitter.lean` | `RowIter`, `refill_from_cursor`, `drain_pending_entry`, `emit_lazy`, `seed`, `reset`, and the operator pull loop; `drive_flatten` |
 | `Query.lean` | `Runtime::query`: the result-set cap and the write drain |
 | `RunBatch.lean` | `run_batch`'s iterative post-order build against the recursive build; `children_to_recurse` |
-| `Cell.lean` | `Runtime::graph()` / `graph_mut()` / `GraphRef` / `Deref` / `HeldRead` on an atomic_refcell borrow-word model |
-| `DropOrder.lean` | `HeldRead` / `Runtime` drop glue, `graph_arc()`, `g` never reassigned |
-| `Protocol.lean` | The read-guard protocol over `MvccGraph` and `QuerySession`; open bug #3439 |
+| `Cell.lean` | The earlier `Arc<AtomicRefCell<Graph>>` borrow-word model (removed by #3683; kept because `pending_commit`'s `Hold` imports it). The current model is `QueryGraph.lean` |
 | `Reuse.lean` | Accessor theorems reused through `graph()` for read plans (needs `redis_layer`) |
 | `Accessors.lean` | Node attribute reads (deleted > pending > committed), the attr-id memo, labels and label staging, degrees |
 | `RelAccessors.lean` | Relationship attribute reads, typed materialisation, `label_id`, endpoints and type, pending attribute writes |
@@ -126,18 +115,15 @@ Its `lakefile.toml` requires [`../redis_layer`](../redis_layer) (for `Reuse.lean
 
 ## Coverage
 
-`COVERAGE.tsv` has 94 rows: 53 in `runtime.rs`, 39 in `batched_result_emitter.rs` and 2 in `ops/mod.rs`.
+`COVERAGE.tsv` has 64 rows: 52 in `runtime.rs`, 11 in `batched_result_emitter.rs` and 1 in `ops/mod.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 53 |
-| CONDITIONAL | 9 |
-| MODELLED | 7 |
-| NOT COVERED | 25 |
+| PROVEN | 60 |
+| CONDITIONAL | 4 |
 
-- **CONDITIONAL:** the nine attribute accessors listed above.
-- **MODELLED:** the `RowIter` constructors (`one`, `spread`, `many`), `start_batch`, `finish_batch` and the two emitter constructors. The model works on `(row, item)` pairs, so the column gather in these functions is abstracted away.
-- **NOT COVERED:** the 24 `GatherItem` typed-lane methods (`new_lanes`/`push_into`/`finish` for each lane) and the trivial `batch` accessor. These lanes are proven once, generically, in `columnar` (`gather_spec`).
+- **CONDITIONAL:** the four attribute accessors listed above (`get_node_attribute`, `get_node_attribute_no_delete_check`, `get_node_attrs`, `get_relationship_attrs`).
+- **Not rows of this ledger:** the `GatherItem` typed-lane methods, which are proven once, generically, in `columnar` (`gather_spec`).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 
@@ -164,4 +150,4 @@ bash proofs/coverage.sh                 # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A change to which IR variants `effective_limit` or `effective_skip` walk through changes `Anc` and the budget theorems. Fixing B1/B2 should turn the `hard_cap_unsound_*` counterexamples into `pre<PR>_` history and prove the new budget against `need`. Fixing #2876 should discharge `hdisj` and move the attribute rows from CONDITIONAL to PROVEN.
+A change to which IR variants `effective_limit` or `effective_skip` walk through changes `Anc` and the budget theorems. Fixing B1/B2 should replace the `hard_cap_unsound_*` counterexamples with a proof of the new budget against `need` (no `pre<PR>_` history is kept). Fixing #2876 should discharge `hdisj` and move the attribute rows from CONDITIONAL to PROVEN.

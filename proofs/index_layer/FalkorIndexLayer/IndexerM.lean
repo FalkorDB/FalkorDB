@@ -1,7 +1,7 @@
 import FalkorIndexLayer.IndexM
 import FalkorIndexLayer.Proofs
 /-
-# `Indexer` (`graph/src/index/indexer.rs`, origin/main 3fec7d7c9; `create_index` re-targeted to 73077bb4a, #3086)
+# `Indexer` (`graph/src/index/indexer.rs`, origin/main 3fec7d7c9)
 
 The `ArcSwap<HashMap<label, Arc<Index>>>` is `map : AMap Idx`; a store is a
 functional update (readers see either the old or the new map, which is what
@@ -15,7 +15,7 @@ inductive IdxOptions
   | vector (v : VecOpts)
 
 /-- `IndexOptions::language` / `stopwords` / `field_options` / `vector_options`
-(`indexer.rs:102-145`). -/
+(`indexer.rs`). -/
 def IdxOptions.language : IdxOptions → Option String
   | .text o => o.language | .vector _ => none
 def IdxOptions.stopwords : IdxOptions → Option (List String)
@@ -39,7 +39,7 @@ theorem IdxOptions.spec (o : TextOpts) (v : VecOpts) :
   · simp only [IdxOptions.fieldOptions]; split <;> simp_all [or_assoc]
   · intro fo h; simp only [IdxOptions.fieldOptions] at h; split at h <;> cases h; simp
 
-/-- `PopulationTicket` (`indexer.rs:76-97`). -/
+/-- `PopulationTicket` (`indexer.rs`). -/
 structure Ticket where
   label : String
   gen : Nat
@@ -72,11 +72,11 @@ def memoryUsage (I : Ixr) (mem : Nat → Nat) : Nat := (I.map.map (·.2.memoryUs
 def fieldName (t : IType) (a : String) : String :=
   match t with | .range => "range:" ++ a | .fulltext => a | .vector => "vector:" ++ a
 
-/-- The field built for one attribute (`indexer.rs:269-287`). -/
+/-- The field built for one attribute (`indexer.rs`). -/
 def mkField (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) (a : String) : Field :=
   match vo with | some v => Field.newVec (fieldName t a) t v | none => Field.new (fieldName t a) t fo
 
-/-- The attribute loop of `create_index` (`indexer.rs:268-299`). -/
+/-- The attribute loop of `create_index` (`indexer.rs`). -/
 def addAttrs (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
     Idx → AMap (List Field) → List String → Except String (Idx × AMap (List Field))
   | x, nf, [] => .ok (x, nf)
@@ -88,7 +88,7 @@ def addAttrs (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
     let x' := if x.containsField a then x.addFieldToExisting a f else x.insertField a f
     addAttrs t fo vo x' nf' as
 
-/-- The validation loop (`indexer.rs:247-259`). -/
+/-- The validation loop (`indexer.rs`). -/
 def validate (existing : Option Idx) (t : IType) : List String → List String → Except String Unit
   | _, [] => .ok ()
   | seen, a :: as =>
@@ -103,7 +103,7 @@ def optParts (lower : String → String) (opts : Option IdxOptions) :
   | some (.vector v) => (none, none, none, some v)
   | none => (none, none, none, none)
 
-/-- The pre-validation of `create_index` (`indexer.rs:222-241`). -/
+/-- The pre-validation of `create_index` (`indexer.rs`). -/
 def preCheck (existing : Option Idx) (t : IType) (label : String)
     (p : Option String × Option (List String) × Option TextOpts × Option VecOpts) : Except String Unit :=
   if existing.any (·.hasFulltextField) && p.1.isSome then
@@ -113,7 +113,7 @@ def preCheck (existing : Option Idx) (t : IType) (label : String)
   else if p.2.2.1.isSome && t != .fulltext then .error "Text index options are only valid for fulltext indexes"
   else .ok ()
 
-/-- The RS spec step of `create_index` (`indexer.rs:300-328`). -/
+/-- The RS spec step of `create_index` (`indexer.rs`). -/
 def specStep (E : Env) (t : IType) (label : String) (language : Option String)
     (stopwords : Option (List String)) (fo : Option TextOpts) (x1 : Idx) (nf : AMap (List Field)) :
     Except String Idx :=
@@ -124,7 +124,7 @@ def specStep (E : Env) (t : IType) (label : String) (language : Option String)
     | .error e => .error e
     | .ok x' => x'.registerFields nf fo E.tieredOk
 
-/-- Language/stopwords defaults and progress (`indexer.rs:333-345`). -/
+/-- Language/stopwords defaults and progress (`indexer.rs`). -/
 def finish (t : IType) (language : Option String) (stopwords : Option (List String)) (total : Nat)
     (x2 : Idx) : Idx :=
   let x3 := if x2.language.isNone && t = .fulltext then
@@ -133,7 +133,7 @@ def finish (t : IType) (language : Option String) (stopwords : Option (List Stri
   let x4 := if stopwords.isSome && x3.stopwords.isNone then x3.setStopwords stopwords else x3
   x4.setProgress 0 total
 
-/-- #3086 (73077bb4a, `indexer.rs:357-359`): every field added to an existing
+/-- #3086 (73077bb4a, `indexer.rs`): every field added to an existing
 entry starts a new population generation (`bump_id`), after every fallible step. -/
 def regen (existing : Option Idx) (g : Nat) (x : Idx) : Idx :=
   if existing.isSome then x.bumpId g else x
@@ -143,7 +143,7 @@ theorem regen_fields (ex : Option Idx) (g : Nat) (x : Idx) :
     (regen ex g x).progressOf = x.progressOf := by
   unfold regen; split <;> simp [Idx.bumpId, Idx.progressOf]
 
-/-- Everything after validation (`indexer.rs:264-366`). -/
+/-- Everything after validation (`indexer.rs`). -/
 def build (E : Env) (I : Ixr) (t : IType) (label : String) (attrs : List String) (total : Nat)
     (p : Option String × Option (List String) × Option TextOpts × Option VecOpts) : Except String Ixr :=
   let x0 := match I.map.get label with | some x => x.cloneForUpdate | none => Idx.default E.freshId
@@ -179,7 +179,7 @@ theorem specStep_ok (E : Env) (t : IType) (label : String) (la : Option String) 
       obtain ⟨s2, f2, -⟩ := Idx.registerFields_ok _ _ _ _ _ h
       exact ⟨f2.trans f1, by simp [Idx.hasRsIndex, s2, s1]⟩
 
-/-- `Indexer::create_index` (`indexer.rs:181`). -/
+/-- `Indexer::create_index` (`indexer.rs`). -/
 def createIndex (E : Env) (I : Ixr) (t : IType) (label : String) (attrs : List String) (total : Nat)
     (opts : Option IdxOptions) : Except String Ixr :=
   let p := optParts E.lower opts
@@ -189,7 +189,7 @@ def createIndex (E : Env) (I : Ixr) (t : IType) (label : String) (attrs : List S
     | .error e => .error e
     | .ok () => build E I t label attrs total p
 
-/-- The drop loop (`indexer.rs:383-397`). -/
+/-- The drop loop (`indexer.rs`). -/
 def dropAttrs (t : IType) : Idx → Bool → List String → Idx × Bool
   | x, r, [] => (x, r)
   | x, r, a :: as =>
@@ -200,7 +200,7 @@ def dropAttrs (t : IType) : Idx → Bool → List String → Idx × Bool
         dropAttrs t (if fs.length = 1 then (x.removeField a).2 else x.retainFields a t) true as
       else dropAttrs t x r as
 
-/-- `Indexer::drop_index` (`indexer.rs:359`). -/
+/-- `Indexer::drop_index` (`indexer.rs`). -/
 def dropIndex (I : Ixr) (label : String) (attrs : List String) (t : IType) (total : Nat) :
     Option (Nat × Nat) × Ixr :=
   match I.map.get label with
@@ -213,7 +213,7 @@ def dropIndex (I : Ixr) (label : String) (attrs : List String) (t : IType) (tota
     let x'' := if removed then x'.setProgress 0 total else x'
     (some (before - x''.indexCount, x''.indexCount), { I with map := I.map.upd label x'' })
 
-/-- `Indexer::remove_if_empty` (`indexer.rs:433`, #3856; was `remove`): erase the
+/-- `Indexer::remove_if_empty` (`indexer.rs`, #3856; was `remove`): erase the
 entry only while it still has no fields (`index_count() == 0`), since a
 `CREATE INDEX` may have re-filled it before the background drop ran. -/
 def removeIfEmpty (I : Ixr) (label : String) : Ixr :=
@@ -227,32 +227,32 @@ def isLabelIndexed (I : Ixr) (l a : String) (t : IType) : Bool :=
 def isAttrIndexed (I : Ixr) (l a : String) : Bool :=
   match I.map.get l with | some x => operational x && x.containsField a | none => false
 /-- Routing shared by `query`, `query_edges`, `fulltext_query(_edges)`,
-`vector_query(_edges)` (`indexer.rs:467-551`): the per-label index, or the
+`vector_query(_edges)` (`indexer.rs`): the per-label index, or the
 empty iterator when the label has none. -/
 def route (I : Ixr) (l : String) : Option Idx := I.map.get l
 def vectorField (I : Ixr) (l a : String) : Option Field := do
   let x ← I.map.get l
   let fs ← x.getFields a
   fs.find? (fun f => f.ty == .vector && f.vopts.isSome)
-/-- `get_vector_metric` (`indexer.rs:562`). -/
+/-- `get_vector_metric` (`indexer.rs`). -/
 def getVectorMetric (I : Ixr) (l a : String) : Option String := do
   let x ← I.map.get l
   let fs ← x.getFields a
   (fs.find? (fun f => f.ty == .vector && (f.vopts.bind (·.sim)).isSome)).bind (fun f => f.vopts.bind (·.sim))
-/-- `get_vector_dimension` (`indexer.rs:585`). -/
+/-- `get_vector_dimension` (`indexer.rs`). -/
 def getVectorDimension (I : Ixr) (l a : String) : Option Nat :=
   (vectorField I l a).bind (fun f => f.vopts.map (·.dimension))
 def getFields (I : Ixr) (l : String) : AMap (List Field) := ((I.map.get l).map (·.fields)).getD []
 def getAllFields (I : Ixr) : List (String × AMap (List Field)) :=
   (I.map.filter (fun p => !p.2.isEmpty)).map (fun p => (p.1, p.2.fields))
-/-- `index_info` (`indexer.rs:793`): non-empty indexes, sorted by label (`le`
+/-- `index_info` (`indexer.rs`): non-empty indexes, sorted by label (`le`
 is `String`'s `Ord`, passed in so that only its order laws are used). -/
 def indexInfo (I : Ixr) (le : String → String → Bool) : List (String × Idx) :=
   (I.map.filter (fun p => !p.2.isEmpty)).mergeSort (fun a b => le a.1 b.1)
 def hasIndex (I : Ixr) (l : String) : Bool := (I.map.get l).isSome
 def hasIndexedAttr (I : Ixr) (l a : String) : Bool :=
   match I.map.get l with | some x => x.containsField a | none => false
-/-- `update_progress` (`indexer.rs:840`): the atomics are interior-mutable, so
+/-- `update_progress` (`indexer.rs`): the atomics are interior-mutable, so
 the published index itself changes. -/
 def updateProgress (I : Ixr) (l : String) (p : Nat) : Ixr :=
   match I.map.get l with
@@ -607,9 +607,9 @@ theorem recreate_spec (E : Env) (I I' : Ixr) (l : String) (h : I.recreate E l = 
     exact ⟨y, by simp [AMap.get_upd], s, by rw [f, Idx.cloneForUpdate_eq], i⟩
   · next hx => cases h; exact ⟨fun _ _ => rfl, fun x h => by rw [h] at hx; cases hx⟩
 
-/-! ## #3086 (73077bb4a): adding a field to an existing entry starts a new generation -/
+/-! ## Adding a field to an existing entry starts a new generation -/
 
-/-- `is_ticket_current` (`indexer.rs:698`). -/
+/-- `is_ticket_current` (`indexer.rs`). -/
 def isTicketCurrent (I : Ixr) (tk : Ticket) : Bool :=
   match I.map.get tk.label with | some x => x.id == tk.gen | none => false
 

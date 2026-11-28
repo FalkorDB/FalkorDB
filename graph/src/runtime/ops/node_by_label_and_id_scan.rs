@@ -6,7 +6,7 @@
 //! from the minimum candidate ID, and yields those whose ID falls within
 //! the evaluated filter range.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use crate::graph::graph::NodeId;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryNode, Variable};
@@ -25,7 +25,7 @@ pub struct NodeByLabelAndIdScanOp<'a> {
     /// Holds the parent batch being expanded and the per-row id iterators, and
     /// performs the shared pack-and-gather emit.
     pub(crate) emitter: BatchedResultEmitter<'a, NodeId>,
-    node_pattern: &'a QueryNode<Arc<String>, Variable>,
+    node_pattern: &'a QueryNode<ArcStr, Variable>,
     filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
@@ -34,7 +34,7 @@ impl<'a> NodeByLabelAndIdScanOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        node_pattern: &'a QueryNode<ArcStr, Variable>,
         filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,

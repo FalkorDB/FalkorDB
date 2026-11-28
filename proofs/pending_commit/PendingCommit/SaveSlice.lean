@@ -1,7 +1,7 @@
 import PendingCommit.SaveNthLive
 import PendingCommit.StoreCodec
 /-
-# `AttributeStore::encode_with_range` as merged in #3438 (attribute_store.rs:1427-1476)
+# `AttributeStore::encode_with_range` (attribute_store.rs)
 
 ```rust
 if count == 0 { return; }
@@ -17,13 +17,6 @@ for id in start..=max_id {
     if encoded >= count { break; }
 }
 ```
-
-| here | there |
-| --- | --- |
-| `walk ent count ids q enc` | the `for id in start..=max_id` loop (:1453-1475); the cursor state is `q`, the ids the iterator has still to yield *including* `next_deleted = q.head?` (`next()` = advance to `q.tail`) |
-| `prEncode` | `encode_with_range` (:1427) |
-| `ent id` | the per-entity writes (:1459-1469), the same code as main's: abstract, then instantiated with pending_commit's `(id, dread d id)` |
-| `PendingCommit.Content.encode` | **main's** `encode_with_range` (pre-#3438, 9212add39 :1425; pending_commit `StoreCodec.lean`) |
 
 * `walk_spec` — with the cursor at the deleted ids `≥ id`, the loop writes the
   live ids of the remaining range, first `count - encoded` of them.

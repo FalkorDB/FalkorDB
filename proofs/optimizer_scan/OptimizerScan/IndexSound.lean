@@ -1,9 +1,12 @@
 import OptimizerScan.Index
 namespace OptimizerScan.Index
 
-/-- Property values the index represents faithfully: Null, Int, String. -/
+/-- Property values the index represents faithfully: Null, Int, String, and (since the array
+tree, #2453/#3736) a list of scalars, which the scalar tree does not hold at all (`enc` is `none`
+on it, as every comparison with a list is not `true`) and the array tree holds element by element
+(`arrEnc`). Bool and Date values stay outside (C1, C2). -/
 def faithV : V → Bool
-  | .null | .i _ | .s _ => true
+  | .null | .i _ | .s _ | .arr _ => true
   | _ => false
 
 /-- Literals the index represents faithfully: non-lossy Int, String. -/

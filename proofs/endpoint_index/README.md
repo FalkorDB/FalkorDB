@@ -1,6 +1,6 @@
 # endpoint_index: the edge id → (source, destination) lookup
 
-This project proves that `EndpointIndex` (`graph/src/graph/endpoint_index.rs`) answers exactly what the edge set says. `EndpointIndex` is the graph-wide reverse index from a relationship id to its `(src, dst)`. It does not record the type, which lives in `relationship_type_matrix`, or node → incident edges, which live in the per-type tensors.
+This project proves that `EndpointIndex` (`graph/src/graph/endpoint_index.rs`) answers exactly what the edge set says. `EndpointIndex` is the graph-wide reverse index from a relationship id to its `(src, dst)`. Since #3967 it also records each edge's relationship type in a `u16` type column (`NO_TYPE` = `u16::MAX` marks an empty slot; `TIx`, `getType_set`, `getType_clear`, `restoreT_getType`). It does not record node → incident edges, which live in the per-type tensors.
 
 Every time the engine materialises a relationship, it reads this index. That happens on `RETURN r`, `startNode(r)` / `endNode(r)`, path construction, and any traversal that hands back an edge. So these behaviours depend on it:
 
@@ -13,7 +13,7 @@ Every time the engine materialises a relationship, it reads this index. That hap
 
 To save memory the index keeps four tiers of slots, 16-, 24-, 32- and 64-bit. An edge whose endpoints fit a narrow tier is stored narrow. When a reused id gets endpoints too large for its tier, the tier is *promoted*: re-encoded into a wider one. A deleted edge is a tombstone, both fields set to the tier's all-ones value. Nothing ever shrinks.
 
-The full Lean↔Rust mapping is in the header of [`FalkorEndpointIndex.lean`](FalkorEndpointIndex.lean) (flat model) and [`EndpointPaged.lean`](EndpointPaged.lean) (pages and `Arc`s). This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv); [`EndpointPaged.lean`](EndpointPaged.lean) models pages and `Arc`s. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -37,13 +37,13 @@ No. `raiseTo_spec` proves `raise_to` changes no answer: live pairs, tombstones a
 
 **3. Does restore rebuild the same index?**
 
-`restore_agrees` proves `Graph::restore`'s path (`prepare_tiers` with any tier boundaries, then `set` for every edge) gives exactly the restored edge set.
+`restore_agrees` proves `Graph::restore`'s path (`prepare_tiers` with any tier boundaries, then `set` for every edge) gives exactly the restored edge set. `EndpointGraph.lean` models the whole function: `restoreIndex_get` for the starts the first scan computes, `restoreStarts_ordered` (ordered, within `len`), `restore_ids_lt_len` (no edge id past the allocated length), `restore_tier1_start` (an edge that needs a wider tier starts at or past that tier, so restore never promotes), and the scalar fields (`capOf_spec`, `restoredFields_spec`: capacities at least the id bound and 64 while `bound + chunk <= 2^64`, `schema_version`, version 0, empty indexers; the release build's `u64` wrap is modelled, `capOf_wraps`: a bound within a chunk of 2^64 gives a capacity below it). `EndpointRelease.lean` models `delete_implicit_edges`'s fallible `release(...)?`: `implicitOutcome_ok`/`implicitOutcome_err`/`implicitOutcome_recycled` (an `Err` clears no adjacency and returns no edges), on top of id_space's `release_spec`.
 
-Since #2905 `prepare_tiers` clamps the tier starts monotone itself (`clampStarts`). `clampStarts_mono` proves the tier sizes then never underflow and sum to the slot count, whatever the caller passes; `clampStarts_ordered` that the clamp changes nothing for the ordered starts `restore` already computes. Before #2905 only a `debug_assert!` guarded the order (the Rust test's `[10, 5, 0]` would subtract 10 from 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412). `restore` never passed such starts, so this was an unchecked contract rather than a reachable bug.
+`prepare_tiers` clamps the tier starts monotone itself (`clampStarts`). `clampStarts_mono` proves the tier sizes then never underflow and sum to the slot count, whatever the caller passes; `clampStarts_ordered` that the clamp changes nothing for the ordered starts `restore` already computes.
 
 **4. Does `DETACH DELETE` leave stale endpoints?**
 
-No. `mem_collect` proves `delete_implicit_edges`' per-type collection is exactly "incident to a deleted node and not deleted explicitly", and `collect_nodup` that it lists no id twice. `detach_delete_index` proves that after clearing them, those edges read as absent and every other edge reads as before.
+No. `mem_collect` proves `delete_implicit_edges`' per-type collection is exactly "incident to a deleted node and not deleted explicitly", and `collect_nodup` that it lists no id twice. `detach_delete_index` proves that after clearing them, those edges read as absent and every other edge reads as before. `EndpointGraph.lean` models the whole function: `deletedEdges_mem` (what it returns, with the types), `stagedDocs_mem` (edge-index removals for indexed types), `clearImplicit_get` (all types at once), and the adjacency rule `clearedAdj_mem` (a pair is cleared iff a tensor lost its last edge on it and either both endpoints are deleted or no edge is left anywhere; `adj_kept_when_edge_remains`, `adj_cleared_when_last_gone`).
 
 **5. Do versions stay isolated?**
 
@@ -83,7 +83,7 @@ Tiers are split into pages held by `Arc`s, so a new MVCC version shares pages un
 
 ## Bugs found
 
-None. The one boundary the spec needs, an edge whose endpoints are both `u64::MAX`, is unreachable (above), and is documented in `endpoint_index.rs` only for the narrow tiers. The unchecked `prepare_tiers` order contract (#2903) was hardened by #2905.
+None. The one boundary the spec needs, an edge whose endpoints are both `u64::MAX`, is unreachable (above), and is documented in `endpoint_index.rs` only for the narrow tiers.
 
 There are no CONDITIONAL rows.
 
@@ -96,21 +96,22 @@ There are no CONDITIONAL rows.
 | `EndpointPaged/Layout.lean` | The `Endpoint` impls and their contract, `Paged<T>` shape, memory accounting, `from_slots` |
 | `EndpointPaged/Writes.lean` | Page-level `put`/`vacate`, `grow_to`, `reserve_exact` |
 | `EndpointPaged/Arc.lean` | `Arc` pages as a heap with strong counts: copy-on-write isolation |
+| `EndpointGraph.lean` | `Graph::restore` and `Graph::delete_implicit_edges`, whole: the first-pass starts, the restored index, the capacity fields, the returned edges, the staged documents, the index clear and the adjacency rule |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-The lakefile builds two libraries, `FalkorEndpointIndex` and `EndpointPaged`; both are default targets. There are no path dependencies.
+The lakefile builds three libraries, `FalkorEndpointIndex`, `EndpointPaged` and `EndpointGraph`; all are default targets. There are no path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 69 rows: 66 in `endpoint_index.rs` and 3 in `graph.rs`.
+`COVERAGE.tsv` has 69 rows: 66 in `endpoint_index.rs` and 3 in `graph.rs` (`restore`, `delete_implicit_edges`, `clear_edge_endpoint`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 52 |
-| MODELLED | 2 |
+| PROVEN | 54 |
+| MODELLED | 0 |
 | NOT COVERED | 15 |
 
-- **MODELLED:** `Graph::restore` and `Graph::delete_implicit_edges`. Only their endpoint-index parts are modelled here (`restore_agrees`; `mem_collect`, `collect_nodup`, `detach_delete_index`). The rest of those functions is covered in `proofs/graph_queries`.
+- **Formerly MODELLED, now PROVEN:** `Graph::restore` and `Graph::delete_implicit_edges` (`EndpointGraph.lean`). What they hand to other stores (`IdSpace::restored`/`release`, `AttributeStore::remove_all`, the GraphBLAS masks and `Tensor::remove_all` itself) is those functions' own rows in other projects.
 - **NOT COVERED:** all 15 are `#[cfg(test)]` unit tests and test helpers in `endpoint_index.rs`, not engine code.
 - The two `Endpoint` trait declarations have no body. They are PROVEN through `get_put_contract` and `u24_get_put`, which hold for all four impls.
 

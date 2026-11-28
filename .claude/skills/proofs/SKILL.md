@@ -12,7 +12,7 @@ covers line by line and proves properties about that model. Lean 4 only, no
 Mathlib. The toolchain comes from each project's `lean-toolchain`
 (all pin `leanprover/lean4:v4.36.0`).
 
-- `proofs/<area>/<Root>.lean` — the header is the report: Lean↔Rust `file:line` table, theorems, bugs, gaps.
+- `proofs/<area>/<Root>.lean` — imports the modules; its header is a few lines (what the project models, a pointer to the README). The project's `README.md` is the report: what is modelled, the headline theorems, open bugs, gaps.
 - `proofs/<area>/COVERAGE.tsv` — one row per Rust fn: bucket PROVEN / CONDITIONAL / AXIOMATISED / MODELLED / NOT COVERED.
 - `proofs/FINDINGS.md` — the bug ledger. Each bug is confirmed by a repro unless its entry is marked Lean-only, Unconfirmed or a model note; a fixed bug is deleted from the ledger (the file's git history keeps it).
 - `proofs/lean_ci.sh`, `proofs/coverage.sh` — the two gates. `.github/workflows/lean-proofs.yml` (check name `Lean proofs`) reports on every pull request, so it can be a required check: the job itself skips, with a summary line, a PR that touches none of `proofs/**`, `graph/src/**`, `src/**` or the workflow file, and otherwise (and on pushes to `main`) runs both (a separate check, not in `ci-gate`).
@@ -35,8 +35,8 @@ a clean worktree: `git worktree add --detach ../fdb-main origin/main` then
 **Re-target after main moves** (keep the proofs true for the current code):
 1. `git diff <old-sha> origin/main --stat -- graph/src src`. The old sha is in FINDINGS.md "Current state".
 2. Find the projects to update: `grep -l "<file>" proofs/*/COVERAGE.tsv` for each changed file.
-3. For each changed fn: update the Lean model to the new code, re-prove, fix `file:line` cites. Add rows for new fns and delete rows for removed ones.
-4. If the commit fixed a bug, turn its counterexample theorem into a correctness theorem. Keep the old one as a labelled historical note: `pre<PR>_…`, fixed by `#PR (sha)`.
+3. For each changed fn: update the Lean model to the new code, re-prove, and fix the line in its COVERAGE.tsv row (the only place that carries Rust line numbers; Lean comments cite the file and fn name). Add rows for new fns and delete rows for removed ones. A fn has exactly one row, in the project that proves it.
+4. If the commit fixed a bug, turn its counterexample theorem into a correctness theorem and delete the counterexample and any model of the old code (`pre<PR>_…`, `old…`): the fix PR's Rust test guards against a regression, and git history keeps the old proof. Remove the bug from the README and FINDINGS.md.
 5. Run `lean_ci.sh` (all green) and `COVERAGE_RUST_ROOT=../fdb-main bash proofs/coverage.sh` (the worktree override above, when this checkout is not main; 0 unlisted; PROVEN + CONDITIONAL = 100% non-FFI, and no new CONDITIONAL), then update FINDINGS.md "Current state".
 
 **Prove a new or changed function**: model it in the owning project, or start a new
@@ -46,7 +46,7 @@ Conventions are in [REFERENCE.md](REFERENCE.md).
 **When a theorem is false** (the model has a bug): get a concrete counterexample
 (`#eval` or `decide`), then reproduce it against the real Rust before calling it a bug:
 a Rust test, or a live query compared with the C module. Record it in FINDINGS.md with
-`file:line`, the repro, and the Rust vs C output. Keep the counterexample as a theorem.
+`file:line`, the repro, and the Rust vs C output. Keep the counterexample as a theorem while the bug is open; delete it when the fix merges.
 
 **Review a PR with the proofs**: in a new `proofs/pr<N>_review/` project, import the
 definitions you need from the owning projects (Lake path dependency, see REFERENCE.md);

@@ -3,7 +3,7 @@ name = "graph"
 version = "0.1.0"
 edition = "2024"
 description = "Core of the database"
-license = "SSPL-1.0"
+license = "SSPL-1.0 OR AGPL-3.0-only"
 repository = "https://github.com/FalkorDB/FalkorDB"
 readme = "../README.md"
 keywords = ["graph", "database"]
@@ -37,6 +37,7 @@ index-falkordb = ["dep:feral-metis"]
 [dependencies]
 ahash = "0.8"
 arc-swap = "1"
+arcstr = "1.2.0"
 chrono = "0.4.45"
 crossfire = "3.1.19"
 csv = "1.4.0"

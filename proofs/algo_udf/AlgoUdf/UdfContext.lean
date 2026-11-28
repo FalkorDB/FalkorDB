@@ -1,20 +1,10 @@
 import AlgoUdf.Repo
+import AlgoUdf.UdfClasses
 /-! # Thread-local QuickJS context management (`graph/src/udf/js_context.rs`)
 
 QuickJS itself (runtime creation, `eval`, function calls) is AXIOMATISED as the
 oracles passed in (`evalLib`, `call`, …); what is modelled is the Rust control
 flow around it.
-
-| here | there |
-| --- | --- |
-| `Caught`, `errMsg`        | `CaughtError`, `caught_error_message` :70-102 |
-| `normNotDefined`          | the `"x is not defined"` → `"'x' is not defined"` rewrite :81-85 |
-| `effTimeout`              | `compute_effective_js_timeout_ms` :130-137 |
-| `validateTimeout`         | the `effective_ms` of `validate_script` :168-172 |
-| `validateScript`          | `validate_script` :158-188 (setup → eval → collect) |
-| `Cache`, `ensureCurrent`  | `JS_STATE`, `ensure_context_current` :191-206 |
-| `rebuild`                 | `rebuild_context` :208-276 |
-| `bridge`                  | `call_udf_bridge` :280-352 (error mapping :327-337; graph slot cleared :350) |
 -/
 namespace AlgoUdf.UdfContext
 
@@ -123,7 +113,7 @@ structure Cache where
 /-- `rebuild_context`: the old state is dropped first (so a failed rebuild
 leaves `None`); every library is evaluated in order, the first failure aborts
 with its formatted message; then each qualified name found in the JS registry
-is cached under its name as registered (`low` = identity since #3066, js_context.rs:261; it was `to_lowercase`). -/
+is cached under its name as registered (`low` = identity, js_context.rs). -/
 def rebuild (low : String → String) (libs : List Lib) (evalLib : Lib → Except Caught Unit)
     (raw : List String) (v : Nat) : Except String Cache :=
   match libs.findSome? (fun l => match evalLib l with | .error c => some (l, c) | .ok () => none) with
@@ -163,7 +153,7 @@ theorem ensureCurrent_version (low : String → String) (st : Option Cache) (v :
     · intro h; cases h
 
 /-- Cached keys are exactly the (`low` of the) qualified names the scripts really
-registered; case-sensitive (`low = id`) since #3066. -/
+registered; case-sensitive (`low = id`). -/
 theorem rebuild_keys (low : String → String) (libs : List Lib) (ev : Lib → Except Caught Unit)
     (raw : List String) (v : Nat) (c : Cache) (h : rebuild low libs ev raw v = .ok c) :
     ∀ k, k ∈ c.funcs ↔ ∃ l ∈ libs, ∃ q ∈ l.fns, q ∈ raw ∧ k = low q := by
@@ -184,9 +174,9 @@ theorem rebuild_fail (low : String → String) (l : Lib) (rest : List Lib) (ev :
       .error ("Failed to load UDF library '" ++ l.name ++ "': " ++ String.ofList (errMsg c true)) := by
   simp [rebuild, h]
 
-/-! ## ThreadJsState drop order (W3-algo-2, fixed by #3015)
+/-! ## ThreadJsState drop order (W3-algo-2)
 
-`struct ThreadJsState` (js_context.rs:143-151) has no `Drop` impl, so Rust drops its
+`struct ThreadJsState` (js_context.rs) has no `Drop` impl, so Rust drops its
 fields in declaration order; `rebuild_context` (`drop(state.take())`, :213) and
 thread-local destruction both use that glue. QuickJS aborts if the runtime is freed
 while a context or a persistent function is alive. -/
@@ -194,11 +184,8 @@ while a context or a persistent function is alive. -/
 inductive JsField | functions | context | runtime | version
   deriving DecidableEq, Repr
 
-/-- Declaration order of `ThreadJsState` since #3015 (= its drop order). -/
+/-- Declaration order of `ThreadJsState` (= its drop order). -/
 def threadJsStateFields : List JsField := [.functions, .context, .runtime, .version]
-
-/-- Before #3015: `runtime, context, functions, version`. -/
-def threadJsStateFieldsOld : List JsField := [.runtime, .context, .functions, .version]
 
 /-- `a` is dropped strictly before `b`. -/
 abbrev droppedBefore (order : List JsField) (a b : JsField) : Prop :=
@@ -209,11 +196,6 @@ theorem threadJsState_drop_safe :
     droppedBefore threadJsStateFields .functions .context ∧
     droppedBefore threadJsStateFields .context .runtime ∧
     droppedBefore threadJsStateFields .functions .runtime := by
-  decide
-
-/-- The old order freed the runtime first (W3-algo-2 at thread exit). -/
-theorem threadJsState_old_drop_unsafe :
-    ¬ droppedBefore threadJsStateFieldsOld .context .runtime := by
   decide
 
 /-! ## call_udf_bridge -/
@@ -227,14 +209,15 @@ def mapCallErr (msg : List Char) : String :=
     "out of memory"
   else "UDF Exception: " ++ String.ofList msg
 
-/-- `call_udf_bridge`: lookup by exact name (`low = id` since #3066, js_context.rs:292), convert args, call, convert
-back; the graph slot is set before the call and cleared after it whatever the
-outcome. Returns the result and the final graph slot. -/
-def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ) (g : γ)
-    (args : Except String Unit) (call : Except Caught ρ) : Except String ρ × Option γ :=
-  if low name ∉ c.funcs then (.error ("UDF function '" ++ name ++ "' not found in JS context"), slot)
+/-- `call_udf_bridge`: lookup by exact name (`low = id`), then convert args, call, convert
+back, all inside `with_graph(&graph, ..)` (js_context.rs): the graph is lent to the JS
+helpers for this call only, and `with_graph` puts back whichever graph was lent before (null for an
+outermost call). Returns the result and the final thread-local state. -/
+def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (s : UdfClasses.GState γ)
+    (g : γ) (args : Except String Unit) (call : Except Caught ρ) :
+    Except String ρ × UdfClasses.GState γ :=
+  if low name ∉ c.funcs then (.error ("UDF function '" ++ name ++ "' not found in JS context"), s)
   else
-    let _slot := some g
     let r : Except String ρ :=
       match args with
       | .error e => .error e
@@ -242,24 +225,35 @@ def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) 
         match call with
         | .error ce => .error (mapCallErr (errMsg ce false))
         | .ok v => .ok v
-    (r, none)
+    UdfClasses.withGraphRun s g (fun t => (r, t))
 
-/-- Once the function is found, the current-graph slot is always cleared. -/
-theorem bridge_clears {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ)
+/-- Once the function is found, the graph lent before the call (none for an outermost call) is
+back, whatever the outcome (this replaces `clear_current_graph`: a nested call no longer
+clobbers the outer call's graph). -/
+theorem bridge_restores {γ ρ : Type} (low : String → String) (c : Cache) (name : String)
+    (s : UdfClasses.GState γ) (g : γ) (args : Except String Unit) (call : Except Caught ρ)
+    (h : low name ∈ c.funcs) :
+    (bridge low c name s g args call).2.slot = s.slot := by
+  simp [bridge, h, UdfClasses.withGraphRun, UdfClasses.restoreDrop]
+
+/-- An outermost call leaves the slot null, as `clear_current_graph` did. -/
+theorem bridge_clears {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (epoch : Nat)
     (g : γ) (args : Except String Unit) (call : Except Caught ρ) (h : low name ∈ c.funcs) :
-    (bridge low c name slot g args call).2 = none := by
-  simp [bridge, h]
+    (bridge low c name ({ slot := none, epoch := epoch } : UdfClasses.GState γ) g args call).2.slot = none :=
+  bridge_restores low c name _ g args call h
 
-theorem bridge_timeout {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ)
-    (g : γ) (h : low name ∈ c.funcs) :
-    (bridge (ρ := ρ) low c name slot g (.ok ()) (.error (.exception (some "interrupted") none))).1 =
+theorem bridge_timeout {γ ρ : Type} (low : String → String) (c : Cache) (name : String)
+    (s : UdfClasses.GState γ) (g : γ) (h : low name ∈ c.funcs) :
+    (bridge (ρ := ρ) low c name s g (.ok ()) (.error (.exception (some "interrupted") none))).1 =
       .error "UDF Exception: Query timed out" := by
-  simp [bridge, h, errMsg, mapCallErr]
+  simp [bridge, h, errMsg, mapCallErr, UdfClasses.withGraphRun]
   decide
 
-theorem bridge_not_found {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ)
-    (g : γ) (args : Except String Unit) (call : Except Caught ρ) (h : low name ∉ c.funcs) :
-    bridge low c name slot g args call = (.error ("UDF function '" ++ name ++ "' not found in JS context"), slot) := by
+theorem bridge_not_found {γ ρ : Type} (low : String → String) (c : Cache) (name : String)
+    (s : UdfClasses.GState γ) (g : γ) (args : Except String Unit) (call : Except Caught ρ)
+    (h : low name ∉ c.funcs) :
+    bridge low c name s g args call =
+      (.error ("UDF function '" ++ name ++ "' not found in JS context"), s) := by
   simp [bridge, h]
 
 end AlgoUdf.UdfContext

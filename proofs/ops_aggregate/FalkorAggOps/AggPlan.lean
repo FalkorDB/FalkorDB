@@ -2,27 +2,14 @@
 Aggregate operator: expression analysis, accumulator zeroing/unbinding, `GroupKey`,
 `args_for`, `new` (graph/src/runtime/ops/aggregate.rs).
 
-| here | there |
-| --- | --- |
-| `Ex`, `Fn`, `Cst`            | `ExprIR<Variable>` tree (`DynNode`), `GraphFn`, `ExprIR::Constant` |
-| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs:167) |
-| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs:382) |
-| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs:313) |
-| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs:1082) |
-| `unbindAcc` / `unbindAccL`   | `unbind_agg_accumulators` (aggregate.rs:1230) |
-| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs:90, :101) |
-| `hashU64` (history)          | `HashU64::hash_u64` (removed by #2977; was aggregate.rs:1254/:1258) |
-| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs:208) |
-| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs:280) |
-
-`is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs:783), and the
+`is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs), and the
 `initial` value lives in that variant, so a function is aggregate iff `init = some z`.
 -/
 namespace FalkorAggOps.AggPlan
 
 variable {Z : Type}
 
-/-- Literal kinds that matter: `count(<non-null literal>)` is `count(*)` (aggregate.rs:449). -/
+/-- Literal kinds that matter: `count(<non-null literal>)` is `count(*)` (aggregate.rs). -/
 inductive Cst where
   | btrue | bfalse | int | float | str | null | other
   deriving DecidableEq
@@ -47,7 +34,7 @@ def isAggNode : Ex Z → Bool
   | .func f _ => f.init.isSome
   | _ => false
 
-/-! ## `subtree_has_aggregate` (aggregate.rs:167) -/
+/-! ## `subtree_has_aggregate` (aggregate.rs) -/
 
 mutual
 def hasAgg : Ex Z → Bool
@@ -88,7 +75,7 @@ aggregate call. -/
 theorem hasAgg_iff (e : Ex Z) : hasAgg e = true ↔ ∃ n ∈ nodes e, isAggNode n = true := by
   rw [hasAgg_spec]; simp
 
-/-! ## `analyze_agg_tree` (aggregate.rs:382) -/
+/-! ## `analyze_agg_tree` (aggregate.rs) -/
 
 inductive Input (Z : Type) where
   | var (v : Nat)
@@ -107,7 +94,7 @@ def countStarLit : Cst → Bool
   | .btrue | .int | .float | .str => true
   | _ => false
 
-/-- Single argument (aggregate.rs:442-467). `none` = whole analysis bails. -/
+/-- Single argument (aggregate.rs). `none` = whole analysis bails. -/
 def singleArg (f : Fn Z) (arg : Ex Z) : Option (Option (Input Z)) :=
   match arg with
   | .var v => some (some (.var v))
@@ -115,7 +102,7 @@ def singleArg (f : Fn Z) (arg : Ex Z) : Option (Option (Input Z)) :=
                 else if hasAgg arg then none else some (some (.computed arg))
   | _ => if hasAgg arg then none else some (some (.computed arg))
 
-/-- Multi-argument tail check (aggregate.rs:478-483): children `1..n-1` all constants. -/
+/-- Multi-argument tail check (aggregate.rs): children `1..n-1` all constants. -/
 def constsOf : List (Ex Z) → Option (List Cst)
   | [] => some []
   | e :: es => match isConst e, constsOf es with
@@ -134,7 +121,7 @@ def distinctInput (ds : List (Ex Z)) : Option (Input Z) :=
     | _ => if hasAgg inner then none else some (.computed inner)
   | _ => none
 
-/-- The per-shape body of aggregate.rs:404-505, once `acc` (the last child) is known. -/
+/-- The per-shape body of aggregate.rs, once `acc` (the last child) is known. -/
 def aggBody (f : Fn Z) (acc : Nat) (cs : List (Ex Z)) : Option (VAgg Z) :=
   match cs with
   | [.distinct ds, _] => (distinctInput ds).map fun i => ⟨f, some i, acc, true, []⟩
@@ -240,7 +227,7 @@ theorem distinctInput_computed (ds : List (Ex Z)) (x : Ex Z) (h : distinctInput 
       · rename_i hh; cases h; exact ⟨rfl, by simpa using hh⟩
   · cases h
 
-/-- `count(*)` (parsed as `count(1)`, cypher.rs:2023) needs no input column. -/
+/-- `count(*)` (parsed as `count(1)`, cypher.rs) needs no input column. -/
 theorem countStar_no_input (f : Fn Z) (z : Z) (acc : Nat) (hf : f.init = some z) (hc : f.isCount = true) :
     analyzeAgg (.func f [.const .int, .var acc]) = some ⟨f, none, acc, false, []⟩ := by
   simp [analyzeAgg, aggBody, hf, isVar, singleArg, countStarLit, hc]
@@ -275,14 +262,14 @@ theorem multi_extra (f : Fn Z) (z : Z) (v acc : Nat) (cs : List Cst) (hf : f.ini
   unfold aggBody
   simp only [hd, hcs, multiArg]
 
-/-! ## `analyze` (aggregate.rs:313) -/
+/-! ## `analyze` (aggregate.rs) -/
 
 inductive KeyKind (Z : Type) where
   | var (v : Nat)
   | prop (v : Nat) (attr : Nat)
   | computed (e : Ex Z)
 
-/-- One key (aggregate.rs:316-370). `none` = the whole operator bails. -/
+/-- One key (aggregate.rs). `none` = the whole operator bails. -/
 def analyzeKey (e : Ex Z) : Option (KeyKind Z) :=
   match e with
   | .var v => some (.var v)
@@ -340,5 +327,211 @@ theorem analyzeKey_spec (e : Ex Z) (k : KeyKind Z) (h : analyzeKey e = some k) :
   · split at h
     · cases h
     · cases h; simp
+
+/-- `AggregateOp::analyze` (aggregate.rs since #3579): an aggregation with any implicit grouping
+key (`implicit_keys`, abstract here) is refused, so it takes the per-row path; otherwise the
+analysis is `analyze` on the explicit keys and the aggregations. -/
+def analyzeOp {K : Type} (implicit : List K) (keys aggs : List (Ex Z)) :
+    Option (List (KeyKind Z) × List (VAgg Z)) :=
+  if implicit.isEmpty then analyze keys aggs else none
+
+/-- With an implicit grouping key the vectorized path is never taken: `consume_input_vectorized`
+may therefore hand its fallback an empty `ImplicitKeys`. -/
+theorem analyzeOp_implicit {K : Type} (implicit : List K) (keys aggs : List (Ex Z))
+    (h : implicit ≠ []) : analyzeOp implicit keys aggs = none := by
+  cases implicit with
+  | nil => exact absurd rfl h
+  | cons _ _ => rfl
+
+/-- Without implicit keys `analyze` is unchanged (`analyze_spec`, `analyze_lengths` apply). -/
+theorem analyzeOp_none {K : Type} (keys aggs : List (Ex Z)) :
+    analyzeOp ([] : List K) keys aggs = analyze keys aggs := rfl
+
+/-! ## `max_variable_id` (aggregate.rs, #3579) -/
+
+/-- An expression tree for `max_variable_id`: each node carries the ids it reads or binds
+itself (`Variable`: its id; a quantifier or list comprehension: its variable; `reduce`: its
+accumulator and iterator; any other node: none). -/
+inductive VT where
+  | node (own : List Nat) (cs : List VT)
+
+/-- The node's own id: the largest of the ids it reads or binds (`ExprIR::loop_vars`), `0` if
+none (the Rust takes the max over the whole DFS walk, `unwrap_or(0)`). -/
+def ownId (own : List Nat) : Nat := own.foldl max 0
+
+mutual
+/-- `max_variable_id`: the node's own id folded with `u32::max` over every child. -/
+def maxVarId : VT → Nat
+  | .node own cs => maxVarIdL (ownId own) cs
+def maxVarIdL : Nat → List VT → Nat
+  | a, [] => a
+  | a, c :: cs => maxVarIdL (max a (maxVarId c)) cs
+end
+
+-- Every id the tree reads or binds, pre-order.
+mutual
+def allIds : VT → List Nat
+  | .node own cs => own ++ allIdsL cs
+def allIdsL : List VT → List Nat
+  | [] => []
+  | c :: cs => allIds c ++ allIdsL cs
+end
+
+theorem le_foldl_max (l : List Nat) (a : Nat) : a ≤ l.foldl max a ∧ ∀ x ∈ l, x ≤ l.foldl max a := by
+  induction l generalizing a with
+  | nil => simp
+  | cons y ys ih =>
+    obtain ⟨h1, h2⟩ := ih (max a y)
+    refine ⟨by simp only [List.foldl_cons]; omega, fun x hx => ?_⟩
+    simp only [List.foldl_cons]
+    rcases List.mem_cons.mp hx with rfl | hx
+    · omega
+    · exact h2 x hx
+
+mutual
+theorem maxVarId_ge : ∀ t : VT, ∀ x ∈ allIds t, x ≤ maxVarId t
+  | .node own cs => by
+    intro x hx
+    simp only [allIds, List.mem_append] at hx
+    simp only [maxVarId]
+    rcases hx with hx | hx
+    · exact Nat.le_trans ((le_foldl_max own 0).2 x hx) (maxVarIdL_ge cs (ownId own)).1
+    · exact (maxVarIdL_ge cs (ownId own)).2 x hx
+theorem maxVarIdL_ge : ∀ (cs : List VT) (a : Nat), a ≤ maxVarIdL a cs ∧ ∀ x ∈ allIdsL cs, x ≤ maxVarIdL a cs
+  | [], a => by simp [maxVarIdL, allIdsL]
+  | c :: cs, a => by
+    obtain ⟨h1, h2⟩ := maxVarIdL_ge cs (max a (maxVarId c))
+    refine ⟨by simp only [maxVarIdL]; omega, fun x hx => ?_⟩
+    simp only [allIdsL, List.mem_append] at hx
+    simp only [maxVarIdL]
+    rcases hx with hx | hx
+    · have := maxVarId_ge c x hx; omega
+    · exact h2 x hx
+end
+
+/-- **The slots are fresh** (`implicit_keys`, #3579): the first slot id, one above
+`max_variable_id` of every key and aggregation tree, and every later one, is above every id
+any of those trees reads or binds (a comprehension's or `reduce`'s own variables included), so
+a slot is never read as an old-scope variable. -/
+theorem slot_fresh (ts : List VT) (n : Nat) (t : VT) (ht : t ∈ ts) (x : Nat) (hx : x ∈ allIds t) :
+    x < (ts.map maxVarId).foldl max 0 + 1 + n := by
+  have h1 := maxVarId_ge t x hx
+  have h2 := (le_foldl_max (ts.map maxVarId) 0).2 (maxVarId t) (List.mem_map_of_mem ht)
+  omega
+
+/-! ## `free_variables` (aggregate.rs, #3579) -/
+
+/-- An expression tree for `free_variables`: each node carries the id it reads (`Variable`)
+and the loop variables it binds (`ExprIR::loop_vars`: a quantifier's or comprehension's
+variable, `reduce`'s accumulator and iterator). A `Variable` is identified by its id. -/
+inductive FT where
+  | node (read : Option Nat) (binds : List Nat) (cs : List FT)
+
+mutual
+/-- The ids read, in `walk::<Dfs>()` (pre-)order. -/
+def readsOf : FT → List Nat
+  | .node r _ cs => r.toList ++ readsOfL cs
+def readsOfL : List FT → List Nat
+  | [] => []
+  | c :: cs => readsOf c ++ readsOfL cs
+end
+
+mutual
+/-- Every loop variable bound anywhere in the tree (`bound` in the Rust). -/
+def boundOf : FT → List Nat
+  | .node _ b cs => b ++ boundOfL cs
+def boundOfL : List FT → List Nat
+  | [] => []
+  | c :: cs => boundOf c ++ boundOfL cs
+end
+
+/-- One step of the Rust loop: push `x` unless it is bound or already pushed. -/
+def fvStep (bound : List Nat) (acc : List Nat) (x : Nat) : List Nat :=
+  if bound.contains x || acc.contains x then acc else acc ++ [x]
+
+/-- `free_variables`: the reads, in order, without the bound ids and without repeats. -/
+def freeVars (t : FT) : List Nat := (readsOf t).foldl (fvStep (boundOf t)) []
+
+theorem fvStep_foldl_mem (bound : List Nat) (x : Nat) :
+    ∀ (l acc : List Nat), x ∈ l.foldl (fvStep bound) acc ↔ x ∈ acc ∨ (x ∈ l ∧ x ∉ bound)
+  | [], acc => by simp
+  | y :: ys, acc => by
+    rw [List.foldl_cons, fvStep_foldl_mem bound x ys]
+    unfold fvStep
+    by_cases hs : y ∈ bound ∨ y ∈ acc
+    · have hc : (bound.contains y || acc.contains y) = true := by
+        rcases hs with h | h <;> simp [h]
+      simp only [hc, ite_true]
+      constructor
+      · rintro (h | ⟨h1, h2⟩)
+        · exact .inl h
+        · exact .inr ⟨List.mem_cons_of_mem _ h1, h2⟩
+      · rintro (h | ⟨h1, h2⟩)
+        · exact .inl h
+        · rcases List.mem_cons.mp h1 with rfl | h1
+          · rcases hs with h | h
+            · exact absurd h h2
+            · exact .inl h
+          · exact .inr ⟨h1, h2⟩
+    · have hb : y ∉ bound := fun h => hs (.inl h)
+      have ha : y ∉ acc := fun h => hs (.inr h)
+      have hc : (bound.contains y || acc.contains y) = false := by simp [hb, ha]
+      simp only [hc, Bool.false_eq_true, ite_false]
+      constructor
+      · rintro (h | ⟨h1, h2⟩)
+        · rcases List.mem_append.mp h with h | h
+          · exact .inl h
+          · have hxy : x = y := by simpa using h
+            subst hxy
+            exact .inr ⟨by simp, hb⟩
+        · exact .inr ⟨List.mem_cons_of_mem _ h1, h2⟩
+      · rintro (h | ⟨h1, h2⟩)
+        · exact .inl (List.mem_append_left _ h)
+        · rcases List.mem_cons.mp h1 with rfl | h1
+          · exact .inl (List.mem_append_right _ (by simp))
+          · exact .inr ⟨h1, h2⟩
+
+theorem fvStep_foldl_nodup (bound : List Nat) :
+    ∀ (l acc : List Nat), acc.Nodup → (l.foldl (fvStep bound) acc).Nodup
+  | [], _, h => h
+  | y :: ys, acc, h => by
+    rw [List.foldl_cons]
+    apply fvStep_foldl_nodup bound ys
+    unfold fvStep
+    split
+    · exact h
+    · rename_i hc
+      have ha : y ∉ acc := fun hm => hc (by simp [hm])
+      rw [List.nodup_append]
+      refine ⟨h, by simp, ?_⟩
+      intro a ha' b hb'
+      have : b = y := by simpa using hb'
+      subst this
+      intro hab; subst hab; exact ha ha'
+
+/-- **`free_variables` is exact**: an id is listed iff the tree reads it and no node of the
+tree binds it (the binder gives each loop variable a fresh id, read only under its binder). -/
+theorem freeVars_mem (t : FT) (x : Nat) :
+    x ∈ freeVars t ↔ x ∈ readsOf t ∧ x ∉ boundOf t := by
+  unfold freeVars; rw [fvStep_foldl_mem]; simp
+
+/-- Each variable is listed once. -/
+theorem freeVars_nodup (t : FT) : (freeVars t).Nodup :=
+  fvStep_foldl_nodup _ _ _ List.nodup_nil
+
+/-- A tree that reads nothing free is a constant for grouping: `free_variables` is empty
+(`implicit_keys` skips it). -/
+theorem freeVars_nil_iff (t : FT) :
+    freeVars t = [] ↔ ∀ x ∈ readsOf t, x ∈ boundOf t := by
+  constructor
+  · intro h x hx
+    apply Classical.byContradiction
+    intro hb
+    have := (freeVars_mem t x).2 ⟨hx, hb⟩
+    simp [h] at this
+  · intro h
+    apply List.eq_nil_iff_forall_not_mem.mpr
+    intro x hx
+    exact ((freeVars_mem t x).1 hx).2 (h x ((freeVars_mem t x).1 hx).1)
 
 end FalkorAggOps.AggPlan

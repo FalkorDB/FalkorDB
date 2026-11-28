@@ -3,16 +3,16 @@ Operators: Limit, Skip, Sort (full sort and the bounded top-k heap), Project,
 Unwind, Distinct and the Aggregate operator's grouping and DISTINCT state.
 
 A batch is modelled by its list of ACTIVE rows (`Batch::active_indices`,
-batch.rs:1204 — the selection vector when present, else `0..len`). A stream
+batch.rs — the selection vector when present, else `0..len`). A stream
 of batches is a `List (List α)`; its row sequence is `flatten`.
 -/
 
 namespace FalkorAggOps
 
-/-! ## Limit (ops/limit.rs:52) -/
+/-! ## Limit (ops/limit.rs) -/
 
 /-- `LimitOp::next`, run to exhaustion. `remaining = 0` stops pulling
-(limit.rs:54); an empty batch is skipped (:65); a batch that fits passes
+(limit.rs); an empty batch is skipped (:65); a batch that fits passes
 through (:70); otherwise its first `remaining` active rows are kept (:78). -/
 def limitOp {α : Type} : Nat → List (List α) → List (List α)
   | 0, _ => []
@@ -48,7 +48,7 @@ theorem limitOp_spec {α : Type} (k : Nat) (bs : List (List α)) :
 theorem limit_zero {α : Type} (bs : List (List α)) : limitOp 0 bs = [] := by
   cases bs <;> rfl
 
-/-! ## Skip (ops/skip.rs:50) -/
+/-! ## Skip (ops/skip.rs) -/
 
 def skipOp {α : Type} : Nat → List (List α) → List (List α)
   | _, [] => []
@@ -92,7 +92,7 @@ theorem skip_limit {α : Type} (s k : Nat) (bs : List (List α)) :
 /-! ## Sort: insertion-sort spec and the bounded top-k heap (ops/sort.rs) -/
 
 /-- Rows are identified with their position in the sort's total order
-(keys, then row content, then arrival `seq`: `HeapEntry::cmp`, sort.rs:172).
+(keys, then row content, then arrival `seq`: `HeapEntry::cmp`, sort.rs).
 That order is a strict total order exactly when `compare_value` is one —
 false for NaN / Int-Float near 2^53 (known #2891). We model the order by `Nat`. -/
 def ins (x : Nat) : List Nat → List Nat
@@ -210,9 +210,9 @@ theorem ins_lt_last (x : Nat) (h : List Nat) (hne : h ≠ []) (hx : x < h.getLas
         congr 1
         exact ih (by simp) hx
 
-/-- `build_top_k`'s loop body (sort.rs:425-469): push while below capacity;
+/-- `build_top_k`'s loop body (sort.rs): push while below capacity;
 when full, replace the worst (`peek`, the last of the sorted view) only if the
-new row sorts strictly before it. `cap = 0` drains the child (sort.rs:393). -/
+new row sorts strictly before it. `cap = 0` drains the child (sort.rs). -/
 def rustStep (c : Nat) (h : List Nat) (x : Nat) : List Nat :=
   if c = 0 then [] else
   if h.length < c then ins x h
@@ -267,7 +267,7 @@ theorem rustStep_eq_sem (c : Nat) (h : List Nat) (x : Nat) (hs : Sorted h)
       rw [← heq]; exact (take_ins_ge_last x h hs hne (by omega)).symm
 
 /-- Headline: the streaming top-k heap returns exactly the first `cap` rows of
-the full sort (sort.rs:13-17 claim, and the full-sort path's `truncate`). -/
+the full sort (sort.rs claim, and the full-sort path's `truncate`). -/
 theorem topk_eq_take_sort (c : Nat) (xs : List Nat) :
     xs.foldl (rustStep c) [] = (isort xs).take c := by
   rw [← topk_sem]
@@ -286,7 +286,7 @@ theorem topk_eq_take_sort (c : Nat) (xs : List Nat) :
   exact this xs [] trivial (by simp)
 
 /-- `ORDER BY … SKIP s LIMIT k`: the Sort op keeps `cap = k + s` rows
-(sort.rs:493, `saturating_add` — no wrap), and Skip/Limit above it cut the
+(sort.rs, `saturating_add` — no wrap), and Skip/Limit above it cut the
 window; that is the `[s, s+k)` window of the full sort. -/
 theorem sort_skip_limit (s k : Nat) (xs : List Nat) :
     ((xs.foldl (rustStep (k + s)) []).drop s).take k = ((isort xs).drop s).take k := by
@@ -295,12 +295,12 @@ theorem sort_skip_limit (s k : Nat) (xs : List Nat) :
 
 /-! ## Project and Unwind: batching is invisible -/
 
-/-- `ProjectOp::eval` (project.rs:54): one output row per active input row. -/
+/-- `ProjectOp::eval` (project.rs): one output row per active input row. -/
 theorem project_flatten {α β : Type} (f : α → β) (bs : List (List α)) :
     (bs.map (List.map f)).flatten = bs.flatten.map f := by
   simp [List.map_flatten]
 
-/-- `UNWIND` (unwind.rs:90, `eval_iter_expr`): a list spreads, `null` yields
+/-- `UNWIND` (unwind.rs, `eval_iter_expr`): a list spreads, `null` yields
 nothing, a scalar yields itself. -/
 inductive UV where
   | null
@@ -391,7 +391,7 @@ theorem groupAll_spec {K A : Type} [DecidableEq K] (rows : List (K × A)) (k : K
   simpa [groupAll, lookupG] using this []
 
 /-- Keyed aggregation over no rows has no groups; keyless aggregation
-pre-inserts the single empty-key group (aggregate.rs:533-540, :891-898), so it always
+pre-inserts the single empty-key group (aggregate.rs), so it always
 emits one row of initial accumulators (`count`=0, `sum`=0.0, `avg`=null,
 `collect`=[] …; checked in `agrees_empty_input_aggregates`). -/
 theorem keyed_empty {K A : Type} [DecidableEq K] : groupAll ([] : List (K × A)) = [] := rfl
@@ -401,11 +401,26 @@ def keylessGroups {A : Type} (rows : List A) : List (Unit × List A) :=
 
 theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length = 1 := rfl
 
-/-! ## DISTINCT state keyed by a hash (history: distinct.rs:79, aggregate.rs:724/:968 at ca36bfa15)
+/-- `consume_input_per_row`'s pre-insert (aggregate.rs since #3579): the empty-key default group
+is inserted only when there are neither explicit nor implicit grouping keys (implicit keys
+are keys: `MATCH (n:Missing) RETURN n.x + count(n)` groups by `n.x`). -/
+def preInsert {G : Type} (noKeys noImplicit : Bool) (dflt : G) : List G :=
+  if noKeys && noImplicit then [dflt] else []
 
-#2977 (c652e505e) keys the per-group state by a group id instead; see `GroupId.lean`
-(`distinct_by_group_id_exact`, `fixed2977_collision_example`). The definitions below are the
-pre-#2977 model (its counterexample was removed in bbee75955; the last revision that has them is 17ccc5412). -/
+/-- A keyless aggregation without implicit keys still starts with its one default group
+(`keyless_one_row`). -/
+theorem preInsert_keyless {G : Type} (dflt : G) : preInsert true true dflt = [dflt] := rfl
+
+/-- With an implicit grouping key there is no default group, so an empty input emits no row,
+as with any keyed aggregation (`keyed_empty`). -/
+theorem preInsert_implicit {G : Type} (noKeys : Bool) (dflt : G) :
+    preInsert noKeys false dflt = [] := by
+  cases noKeys <;> rfl
+
+/-! ## DISTINCT deduplication
+
+The per-group state is keyed by a group id; see `GroupId.lean`
+(`distinct_by_group_id_exact`, `fixed2977_collision_example`). -/
 
 /-- Keep the first row of each `key` class (`ValuesDeduper::is_seen`). -/
 def dedupBy {α β : Type} [DecidableEq β] (key : α → β) : List β → List α → List α
@@ -432,30 +447,20 @@ theorem dedup_injective {α β : Type} [DecidableEq α] [DecidableEq β] (h : α
       simp only [List.map_cons] at this
       rw [this]
 
-/-- …and with a collision it drops a row (`#2780`; the grouped-aggregate
-variant below is new). -/
+/-- …and with a collision it drops a row (`#2780`). -/
 theorem dedup_collision_drops :
     dedupBy (fun n : Nat => n % 2) [] [0, 2] = [0] ∧ dedupBy id [] [0, 2] = [0, 2] := by
   decide
 
-/-- Per-group DISTINCT, pre-#2977: the dedup table was keyed by `(distinct node,
-hash(group key row))`, not by the group key (aggregate.rs:724, :968 at ca36bfa15). Two
-groups whose key rows collide shared one `seen` set. -/
-def dcgGo {K : Type} [DecidableEq K] (hk : K → Nat) (k : K) :
-    List (Nat × Nat) → List (K × Nat) → Nat
-  | _, [] => 0
-  | seen, (k', v) :: rs =>
-    if (hk k', v) ∈ seen then dcgGo hk k seen rs
-    else (if k' = k then 1 else 0) + dcgGo hk k ((hk k', v) :: seen) rs
+/-! ## DISTINCT across batches: OPEN bug #2779 (current behaviour, not a superseded model)
 
-def distinctCountGrouped {K : Type} [DecidableEq K] (hk : K → Nat) (rows : List (K × Nat))
-    (k : K) : Nat :=
-  dcgGo hk k [] rows
+`distinctCountBatches`, `distinct_one_batch` and `distinct_fold_clear_overcounts` describe
+`ApplyOp`'s current per-subquery clear of the runtime-wide dedup map (`apply.rs`), tracked as
+W2-agg-1 in the README and in COVERAGE.tsv. -/
 
--- Two distinct keys 0 and 2 that hash alike (hk = · % 2), one value each.
 /-- `count(DISTINCT v)` fed batch by batch, with an optional wipe of the
 (runtime-global) dedup map between batches — what `ApplyOp`'s per-row mode
-does after every subquery (apply.rs:283). -/
+does after every subquery (apply.rs). -/
 def distinctCountBatches (clear : Bool) : List Nat → List (List Nat) → Nat
   | _, [] => 0
   | seen, b :: bs =>
@@ -491,13 +496,10 @@ theorem distinct_fold_clear_overcounts :
     (dedupBy id [] [1, 0, 1, 0, 1, 0]).length = 2 := by
   decide
 
-/-! ## eval.rs:886-893 — an aggregate's finalized value is pushed (#2951)
+/-! ## eval.rs — an aggregate's finalized value is pushed
 
-Re-targeted to 289c201fe. Before #2951 (0912f4500, closes #2945, FINDINGS
-W2-agg-5) the `FuncInvocation` arm of `ExprEval::eval_compound` ran
-`return match finalize { … }` (eval.rs:877 at fb3d516d0), leaving the whole
-stack machine with that one value; that model was removed (in 17ccc5412). On main the arm pushes the finalized value and
-`continue`s (eval.rs:883-893 at 289c201fe), so any enclosing frame, e.g. the
+The `FuncInvocation` arm of `ExprEval::eval_compound` pushes the finalized value and
+`continue`s (eval.rs at 289c201fe), so any enclosing frame, e.g. the
 list literal `[min(x), max(x)]`, still runs. -/
 
 /-- A two-node fragment of `ExprEval::eval_compound`'s stack machine: list
@@ -522,7 +524,7 @@ theorem evalRef_list (es : List E) : evalRef (.list es) = .lst (es.map evalRef) 
   simp [evalRef]
 
 /-- One step of the stack machine. `push` is a leaf's value: a literal, or an
-aggregate's finalized accumulator, which main pushes (eval.rs:889-892 at
+aggregate's finalized accumulator, which main pushes (eval.rs at
 289c201fe). `mk n` is a list literal's frame: it pops its `n` operands and
 pushes the list. -/
 inductive I where
@@ -543,7 +545,7 @@ def run : List I → List R → Option (List R)
   | [], st => some st
   | i :: is, st => (step i st).bind (run is)
 
-/-- Main's stack machine (eval.rs:883-893 at 289c201fe): the aggregate arm
+/-- Main's stack machine (eval.rs at 289c201fe): the aggregate arm
 pushes and `continue`s; the result is the single value left on the stack. -/
 def evalStack (e : E) : R :=
   match run (compile e) [] with
@@ -620,11 +622,9 @@ theorem main_count_lit_list : evalStack (.list [.agg 2, .lit 5]) = .lst [.num 2,
 theorem main_size_singleton_agg : rsize (evalStack (.list [.agg 2])) = some 1 := by
   rw [evalStack_eq_evalRef]; simp [evalRef, rsize]
 
-/-! ### History: before #2951 (eval.rs:877 at fb3d516d0) -/
-
 /-! ## finalize_percentile_{disc,cont}: index bounds and the NaN comparator -/
 
-/-- `percentileDisc` index `ceil(n·p) − 1` (aggregation.rs:621) with the
+/-- `percentileDisc` index `ceil(n·p) − 1` (aggregation.rs) with the
 percentile a rational `a/b ∈ (0,1]` is in bounds. (For f64: `n·p ≤ n` holds
 under round-to-nearest because `p ≤ 1` and `n·1 = n` exactly.) -/
 theorem disc_index_in_bounds (n a b : Nat) (hn : 0 < n) (ha : 0 < a) (hab : a ≤ b) :
@@ -639,7 +639,7 @@ theorem disc_index_in_bounds (n a b : Nat) (hn : 0 < n) (ha : 0 < a) (hab : a �
   · rw [Nat.le_div_iff_mul_le hb]; omega
 
 /-- `percentileCont` reads `values[index + 1]` only when the fraction is
-nonzero (aggregation.rs:661-665); then `index + 1 < n`. -/
+nonzero (aggregation.rs); then `index + 1 < n`. -/
 theorem cont_index_in_bounds (n a b : Nat) (hab : a ≤ b) (hb : 0 < b)
     (hfrac : (n - 1) * a % b ≠ 0) : (n - 1) * a / b + 1 < n := by
   by_cases heq : a = b
@@ -653,15 +653,7 @@ theorem cont_index_in_bounds (n a b : Nat) (hab : a ≤ b) (hb : 0 < b)
   have : (n - 1) * a / b < n - 1 := by rw [Nat.div_lt_iff_lt_mul hb]; exact this
   omega
 
-/-- History (e8f8a3017, fixed by #2912 b033aecc6): the percentile sort comparator
-`partial_cmp(..).unwrap_or(Equal)` (then aggregation.rs:615, :645) with NaN (modelled as
-`none`) was not transitive: 1 ~ NaN ~ 3 but 1 < 3. std's sort panicked on it (and killed a
-live server; `lean_ops_aggregate::bug_percentile_with_nan_panics`). -/
-def pcmpEq : Option Nat → Option Nat → Ordering
-  | some a, some b => compare a b
-  | _, _ => .eq
-
-/-- Main (aggregation.rs:625, :651): `sort_by(|a, b| sort_cmp_f64(a.get_numeric(),
+/-- Main (aggregation.rs): `sort_by(|a, b| sort_cmp_f64(a.get_numeric(),
 b.get_numeric()))` — `partial_cmp`, else NaN (`none`) above every number and equal to itself.
 Numbers are `Nat`s here (any total order on the non-NaN values gives the same laws; the
 f64 version is proofs/value_order `SC.scF64_key`/`SC.scF64_lw`). -/

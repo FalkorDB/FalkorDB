@@ -1,7 +1,7 @@
 import FalkorValueMath.Int64
 import FalkorCore.Value
 /-!
-# `Value` and its arithmetic (`graph/src/runtime/value.rs:180`, `:903-1171`)
+# `Value` and its arithmetic (`graph/src/runtime/value.rs`)
 
 `V F` is `enum Value` with the `f64` payload abstracted to a type `F` whose operations
 come from an `FOps F` record (IEEE semantics is *not* assumed unless a theorem says so).
@@ -30,20 +30,20 @@ structure FOps (F : Type) where
   rem : F → F → F
   fmt6 : F → String
 
-/-- The temporal helpers of value.rs:696-750 and temporal.rs (proved elsewhere). -/
+/-- The temporal helpers of value.rs and temporal.rs (proved elsewhere). -/
 structure TOps where
   decompose : Int → Except String (Int × Int × Int)
   construct : Int → Int → Int → Except String Int
   addTs : Int → Int → Except String Int
   subTs : Int → Int → Except String Int
 
-/-- `OrderMap::insert` (ordermap.rs:76): replace in place, else push. -/
+/-- `OrderMap::insert` (ordermap.rs): replace in place, else push. -/
 def omInsert (m : List (String × V F)) (k : String) (v : V F) : List (String × V F) :=
   match m with
   | [] => [(k, v)]
   | (k', v') :: rest => if k' = k then (k, v) :: rest else (k', v') :: omInsert rest k v
 
-/-- `Extend for OrderMap` (ordermap.rs:218): insert each pair in order. -/
+/-- `Extend for OrderMap` (ordermap.rs): insert each pair in order. -/
 def omExtend (m : List (String × V F)) : List (String × V F) → List (String × V F)
   | [] => m
   | (k, v) :: rest => omExtend (omInsert m k v) rest
@@ -55,7 +55,7 @@ def lookup (m : List (String × V F)) (k : String) : Option (V F) :=
 
 def boolStr (b : Bool) : String := if b then "true" else "false"
 
-/-- `Duration + Duration` (value.rs:1008-1019), `ya + yb` etc. in `i32` in Rust; the
+/-- `Duration + Duration` (value.rs), `ya + yb` etc. in `i32` in Rust; the
 year/month sums are exact here (overflow only for year-wrapped durations, see the
 functions_temporal header). -/
 def durAdd (t : TOps) (a b : Int) (sign : Int) : Except String (V F) := do
@@ -65,7 +65,7 @@ def durAdd (t : TOps) (a b : Int) (sign : Int) : Except String (V F) := do
   let ts ← t.construct (Int.tdiv totalMonths 12) (Int.tmod totalMonths 12) (sa + sign * sb)
   pure (.duration ts)
 
-/-- `Time ± Duration` since #2985 (#2933, value.rs:1059, :1104): a time has no date,
+/-- `Time ± Duration` since #2985 (#2933, value.rs): a time has no date,
 so only the time of day survives — `(t.rem_euclid(86400) ± dur.rem_euclid(86400))
 .rem_euclid(86400)`. `rem_euclid` by a positive divisor is `Int.emod`; the inner
 sum/difference is in `(-86400, 172800)`, so the `i64` arithmetic cannot wrap. Before
@@ -74,7 +74,7 @@ which kept the date part and could fail. -/
 def timeAddDur (t dur : Int) : Int := (t % 86400 + dur % 86400) % 86400
 def timeSubDur (t dur : Int) : Int := (t % 86400 - dur % 86400) % 86400
 
-/-- `Value::add_slow` (value.rs:928-1045), arms in source order. -/
+/-- `Value::add_slow` (value.rs), arms in source order. -/
 def addSlow (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
@@ -100,7 +100,7 @@ def addSlow (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .duration dur, .time d => .ok (.time (timeAddDur d dur))
   | a, b => .error s!"Unexpected types for add operator ({a.name}, {b.name})"
 
-/-- `impl Add for Value` (value.rs:910): scalar fast path, else `add_slow`. -/
+/-- `impl Add for Value` (value.rs): scalar fast path, else `add_slow`. -/
 def add (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .int a, .int b => .ok (.int (wAdd a b))
   | .float a, .float b => .ok (.float (o.add a b))
@@ -108,7 +108,7 @@ def add (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .int a, .float b => .ok (.float (o.add (o.ofInt a) b))
   | a, b => addSlow o t a b
 
-/-- `impl Sub for Value` (value.rs:1042). -/
+/-- `impl Sub for Value` (value.rs). -/
 def sub (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
@@ -127,7 +127,7 @@ def sub (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
 
 def mulMsg (x : V F) : String := s!"Type mismatch: expected Integer, Float, or Null but was {x.name}"
 
-/-- `impl Mul for Value` (value.rs:1091). -/
+/-- `impl Mul for Value` (value.rs). -/
 def mul (o : FOps F) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
@@ -144,13 +144,13 @@ def mul (o : FOps F) : V F → V F → Except String (V F)
 def divMsg (a b : V F) : String :=
   s!"Type mismatch: expected Integer, Float, or Null but was ({a.name}, {b.name})"
 
-/-- `impl Div for Value` (value.rs:1153-1170). -/
+/-- `impl Div for Value` (value.rs). -/
 def div (o : FOps F) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
   | .int a, .int b =>
     if b = 0 then .error "Division by zero"
-    else if a = I64MIN ∧ b = -1 then .error "ArgumentError: integer overflow in division"  -- #3603 checked_div
+    else if a = I64MIN ∧ b = -1 then .error "ArgumentError: integer overflow in division"  -- checked_div
     else .ok (.int (wDiv a b))
   | .float a, .float b => .ok (.float (o.div a b))
   | .float a, .int b => .ok (.float (o.div a (o.ofInt b)))
@@ -167,7 +167,7 @@ theorem div_int_ok (o : FOps F) (a b : Int) (hb : b ≠ 0) (hx : ¬ (a = I64MIN 
     div o (.int a) (.int b) = .ok (.int (wDiv a b)) := by
   simp [div, hb, hx]
 
-/-- `impl Rem for Value` (value.rs:1148). -/
+/-- `impl Rem for Value` (value.rs). -/
 def rem (o : FOps F) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
@@ -224,7 +224,7 @@ theorem add_mixed (a : F) (b : Int) :
     add o t (.float a) (.int b) = .ok (.float (o.add a (o.ofInt b))) ∧
     add o t (.int b) (.float a) = .ok (.float (o.add (o.ofInt b) a)) := ⟨rfl, rfl⟩
 
-/-! ## Lists (value.rs:931-953) -/
+/-! ## Lists (value.rs) -/
 
 theorem add_list_list (a b : List (V F)) : add o t (.list a) (.list b) = .ok (.list (a ++ b)) := by
   rfl
@@ -242,7 +242,7 @@ theorem add_scalar_list (l : List (V F)) (x : V F) (hn : x ≠ .null) (hl : ∀ 
 /-- `[1] + null = null` — null wins over list append (C agrees, live). -/
 theorem add_list_null (l : List (V F)) : add o t (.list l) .null = .ok .null := rfl
 
-/-! ## Maps (value.rs:954-968): right-biased merge that keeps first-seen key order -/
+/-! ## Maps (value.rs): right-biased merge that keeps first-seen key order -/
 
 theorem lookup_omInsert (m : List (String × V F)) (k k' : String) (v : V F) :
     lookup (omInsert m k v) k' = if k = k' then some v else lookup m k' := by
@@ -326,7 +326,7 @@ theorem nodup_omExtend (a b : List (String × V F)) (h : (a.map Prod.fst).Nodup)
   | nil => exact h
   | cons p rest ih => exact ih _ (nodup_omInsert _ _ _ h)
 
-/-! ## Strings (value.rs:969-1002) -/
+/-! ## Strings (value.rs) -/
 
 theorem add_str_str (a b : String) : add o t (.str a) (.str b) = .ok (.str (a ++ b)) := rfl
 theorem add_str_int (a : String) (i : Int) : add o t (.str a) (.int i) = .ok (.str (a ++ toString i)) := rfl

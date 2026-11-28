@@ -21,7 +21,11 @@
 //! 3. push_filters_down        -- Move Filter conjuncts closer to the
 //!       |                        operators that produce their variables
 //!       v
-//! 4. replace_cartesian_       -- Convert CartesianProduct + equality
+//! 4. replace_cartesian_       -- Feed an index-served scan branch of a
+//!    with_index_seek              CartesianProduct with the other branches
+//!       |
+//!       v
+//!    replace_cartesian_       -- Convert CartesianProduct + equality
 //!    with_hash_join               Filter into ValueHashJoin
 //!       |
 //!       v
@@ -57,17 +61,19 @@ mod reduce_var_len_path;
 pub(in crate::planner) mod references;
 mod reorder_labels;
 mod replace_cartesian_with_hash_join;
+mod replace_cartesian_with_index_seek;
 mod select_scan_node;
 mod utilize_index;
 mod utilize_node_by_id;
 
+use arcstr::ArcStr;
 use std::collections::{HashMap, HashSet};
 
 use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    parser::ast::{ExprIR, VarKey, Variable},
+    parser::ast::{ExprIR, QueryNode, VarKey, Variable},
     runtime::value::Value,
 };
 
@@ -84,6 +90,7 @@ use reduce_expand_into::reduce_expand_into;
 use reduce_var_len_path::reduce_var_len_path;
 use reorder_labels::reorder_labels;
 use replace_cartesian_with_hash_join::replace_cartesian_with_hash_join;
+use replace_cartesian_with_index_seek::replace_cartesian_with_index_seek;
 use select_scan_node::select_scan_node;
 use utilize_index::utilize_index;
 use utilize_node_by_id::utilize_node_by_id;
@@ -221,6 +228,7 @@ pub fn optimize(
     select_scan_node(&mut optimized_plan, graph);
     push_filters_down(&mut optimized_plan);
     fuse_anonymous_traverse(&mut optimized_plan);
+    replace_cartesian_with_index_seek(&mut optimized_plan, graph, params);
     replace_cartesian_with_hash_join(&mut optimized_plan);
     absorb_edge_filters_into_vlt(&mut optimized_plan);
     // Re-run path reduction: folding an edge-only filter into a
@@ -242,4 +250,24 @@ pub fn optimize(
     reduce_bound_edge(&mut optimized_plan);
 
     optimized_plan
+}
+
+/// The top-level conjuncts of `expr`: the children of an `AND`, or `expr`
+/// itself.
+pub(super) fn conjuncts(expr: &DynTree<ExprIR<Variable>>) -> Vec<DynNode<'_, ExprIR<Variable>>> {
+    let root = expr.root();
+    if matches!(root.data(), ExprIR::And) {
+        root.children().collect()
+    } else {
+        vec![root]
+    }
+}
+
+/// The node count of the smallest of `node`'s labels, or `None` when it has
+/// no label.
+pub(super) fn min_label_count(
+    node: &QueryNode<ArcStr, Variable>,
+    graph: &Graph,
+) -> Option<u64> {
+    node.labels.iter().map(|l| graph.label_node_count(l)).min()
 }

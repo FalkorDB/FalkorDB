@@ -3,6 +3,7 @@ name = "graph-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
+license = "SSPL-1.0 OR AGPL-3.0-only"
 
 [package.metadata]
 cargo-fuzz = true

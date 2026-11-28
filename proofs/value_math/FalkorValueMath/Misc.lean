@@ -5,13 +5,13 @@ import FalkorValueMath.Conversion
 
 | Lean | Rust (value.rs) |
 | --- | --- |
-| `fmtDuration` | `Value::format_duration` :296 |
-| `HV`, `heapSize`, `amortized` | `Value::heap_size` :342, `amortized_heap_size` :388 |
-| `getAttr`, `pointComponent`, `durationComponentPre` | `get_attr` :439, `get_point_component` :458, `get_duration_component` :608 (pre-chrono part) |
-| `partialCmp` | `PartialOrd for Value` :1788 |
-| `getNumeric` | `Value::get_numeric` :246 |
-| `Tok`, `encode`, `pre3339_decode` | `Encode<19> for Value` :2068; `Decode<19>` before #3339 (current: Nesting.lean) |
-| `Deduper` | `ValuesDeduper` :1853-1896 |
+| `fmtDuration` | `Value::format_duration`  |
+| `HV`, `heapSize`, `amortized` | `Value::heap_size` , `amortized_heap_size`  |
+| `getAttr`, `pointComponent`, `durationComponentPre` | `get_attr` , `get_point_component` , `get_duration_component`  (pre-chrono part) |
+| `partialCmp` | `PartialOrd for Value`  |
+| `getNumeric` | `Value::get_numeric`  |
+| `Tok`, `encode`, `decodeUncapped` | `Encode<19> for Value` ; `Decode<19>` without the cap (current: Nesting.lean) |
+| `Deduper` | `ValuesDeduper`  |
 | `jsonFloat` | `DisplayJson` Float arm :1591 |
 -/
 
@@ -54,73 +54,100 @@ theorem fmtDuration_ex2 : fmtDuration 0 0 90000 = "P1DT1H" := by decide
 
 /-! ## Memory accounting -/
 
-/-- Heap view of a value: payload lengths, capacities and `Arc` strong counts. -/
+/-- Heap view of a value: payload lengths, capacities and `Arc` strong counts.
+A string is an `arcstr::ArcStr` (since #3966): one allocation of header and bytes, no
+spare capacity; `stat` marks arcstr's static strings (the empty string, `literal!`),
+which own no heap and have no strong count (`ArcStr::strong_count` is `None`). -/
 inductive HV where
   | scalar                                              -- Null..Node: inline
   | rel                                                 -- Relationship
-  | str (len cap rc : Nat)
+  | str (len : Nat) (stat : Bool) (rc : Nat)
   | list (items : List HV) (cap rc : Nat)               -- List and Path
-  | map (entries : List (Nat × Nat × Nat × HV)) (rc : Nat) -- (key len, key cap, key rc, value)
+  | map (entries : List (Nat × Bool × Nat × HV)) (rc : Nat) -- (key len, key static, key rc, value)
   | vec (len cap rc : Nat)
 
-/-- `size_of` constants on 64-bit targets (checked by `sizes_are_as_modelled` in
-graph/tests/lean_value_math.rs). -/
+/-- `size_of` constants on 64-bit targets (`size_of::<ArcStr>() = 8` is checked by
+`value_stays_two_words` in value.rs). -/
 def SZ_VALUE : Nat := 16
-def SZ_STRING : Nat := 24
-def SZ_ARC : Nat := 8
+def SZ_ARCSTR : Nat := 8
 def SZ_REL : Nat := 24
 def ARC_HDR : Nat := 16
+/-- `ARCSTR_HDR` in `arcstr_alloc_size` (value.rs): length and refcount words. -/
+def ARCSTR_HDR : Nat := 16
+
+/-- `arcstr_alloc_size` (value.rs): a static owns no heap, else header plus bytes. -/
+def arcstrAlloc (len : Nat) (stat : Bool) : Nat := if stat then 0 else ARCSTR_HDR + len
+
+/-- `arcstr_heap_size` (value.rs): `strong_count` is `None` for a static (0), else
+the allocation divided by the `rc` shares. -/
+def arcstrShare (len : Nat) (stat : Bool) (rc : Nat) : Nat :=
+  if stat then 0 else arcstrAlloc len stat / rc
+
+theorem arcstrAlloc_static (len : Nat) : arcstrAlloc len true = 0 := rfl
+theorem arcstrAlloc_heap (len : Nat) : arcstrAlloc len false = 16 + len := rfl
+/-- One share of an unshared string is its whole allocation; a static is free. -/
+theorem arcstrShare_unshared (len : Nat) (stat : Bool) :
+    arcstrShare len stat 1 = arcstrAlloc len stat := by
+  cases stat <;> simp [arcstrShare, arcstrAlloc]
+/-- The `rc` holders of one string are charged at most its allocation in total. -/
+theorem arcstrShare_le (len rc : Nat) (stat : Bool) :
+    rc * arcstrShare len stat rc ≤ arcstrAlloc len stat := by
+  cases stat
+  · simp only [arcstrShare]; exact Nat.mul_div_le _ _
+  · simp [arcstrShare, arcstrAlloc]
 
 mutual
 def heapSize : HV → Nat
   | .scalar => 0
   | .rel => SZ_REL
-  | .str len _ _ => SZ_STRING + len
+  | .str len stat _ => arcstrAlloc len stat
   | .list items _ _ => items.length * SZ_VALUE + heapSizeList items
   | .map entries _ => heapSizeMap entries
   | .vec len _ _ => len * 4
 def heapSizeList : List HV → Nat
   | [] => 0
   | x :: xs => heapSize x + heapSizeList xs
-def heapSizeMap : List (Nat × Nat × Nat × HV) → Nat
+def heapSizeMap : List (Nat × Bool × Nat × HV) → Nat
   | [] => 0
-  | (klen, _, _, v) :: xs => (SZ_ARC + SZ_STRING + klen + SZ_VALUE + heapSize v) + heapSizeMap xs
+  | (klen, kstat, _, v) :: xs => (SZ_ARCSTR + arcstrAlloc klen kstat + SZ_VALUE + heapSize v) + heapSizeMap xs
 end
 
 mutual
 def amortized : HV → Nat
   | .scalar => 0
   | .rel => SZ_REL
-  | .str _ cap rc => (ARC_HDR + SZ_STRING + cap) / rc
+  | .str len stat rc => arcstrShare len stat rc
   | .list items cap rc => (ARC_HDR + cap * SZ_VALUE + amortizedList items) / rc
   | .map entries rc => (ARC_HDR + amortizedMap entries) / rc
   | .vec _ cap rc => (ARC_HDR + cap * 4) / rc
 def amortizedList : List HV → Nat
   | [] => 0
   | x :: xs => amortized x + amortizedList xs
-def amortizedMap : List (Nat × Nat × Nat × HV) → Nat
+def amortizedMap : List (Nat × Bool × Nat × HV) → Nat
   | [] => 0
-  | (_, kcap, krc, v) :: xs => (SZ_ARC + (ARC_HDR + SZ_STRING + kcap) / krc + SZ_VALUE + amortized v) + amortizedMap xs
+  | (klen, kstat, krc, v) :: xs => (SZ_ARCSTR + arcstrShare klen kstat krc + SZ_VALUE + amortized v) + amortizedMap xs
 end
 
-/- Unshared, well-formed (capacity ≥ length) heap views. -/
+/- Unshared, well-formed (capacity ≥ length) heap views. A static string is never
+shared in the counted sense (it has no count). -/
 mutual
 def Unshared : HV → Prop
   | .scalar | .rel => True
-  | .str len cap rc => rc = 1 ∧ len ≤ cap
+  | .str _ stat rc => stat = true ∨ rc = 1
   | .list items cap rc => rc = 1 ∧ items.length ≤ cap ∧ UnsharedList items
   | .map entries rc => rc = 1 ∧ UnsharedMap entries
   | .vec len cap rc => rc = 1 ∧ len ≤ cap
 def UnsharedList : List HV → Prop
   | [] => True
   | x :: xs => Unshared x ∧ UnsharedList xs
-def UnsharedMap : List (Nat × Nat × Nat × HV) → Prop
+def UnsharedMap : List (Nat × Bool × Nat × HV) → Prop
   | [] => True
-  | (klen, kcap, krc, v) :: xs => krc = 1 ∧ klen ≤ kcap ∧ Unshared v ∧ UnsharedMap xs
+  | (_, kstat, krc, v) :: xs => (kstat = true ∨ krc = 1) ∧ Unshared v ∧ UnsharedMap xs
 end
 
 /- For values nobody shares, `amortized_heap_size ≥ heap_size`: the amortized figure
-additionally charges the `Arc` headers and spare capacity. -/
+additionally charges the `Arc` headers and spare capacity (a string's `ArcStr` header
+is in both). -/
 theorem heap_le_amortized : ∀ (n : Nat) (h : HV), sizeOf h < n → Unshared h → heapSize h ≤ amortized h := by
   intro n
   induction n with
@@ -139,28 +166,32 @@ theorem heap_le_amortized : ∀ (n : Nat) (h : HV), sizeOf h < n → Unshared h 
         have := ih x (by simp at hsz; omega) hux.1
         have := ihx (by simp at hsz; omega) hux.2
         omega
-    have hm : ∀ es : List (Nat × Nat × Nat × HV), sizeOf es < n → UnsharedMap es →
+    have hm : ∀ es : List (Nat × Bool × Nat × HV), sizeOf es < n → UnsharedMap es →
         heapSizeMap es ≤ amortizedMap es := by
       intro es
       induction es with
       | nil => intro _ _; simp [heapSizeMap, amortizedMap]
       | cons e es ihe =>
-        obtain ⟨klen, kcap, krc, v⟩ := e
+        obtain ⟨klen, kstat, krc, v⟩ := e
         intro hsz hue
         simp only [UnsharedMap] at hue
-        obtain ⟨hk, hlen, hv, hrest⟩ := hue
-        subst hk
-        simp only [heapSizeMap, amortizedMap, Nat.div_one]
+        obtain ⟨hk, hv, hrest⟩ := hue
+        have hkey : arcstrAlloc klen kstat ≤ arcstrShare klen kstat krc := by
+          rcases hk with hk | hk
+          · subst hk; simp [arcstrShare, arcstrAlloc]
+          · subst hk; rw [arcstrShare_unshared]; exact Nat.le_refl _
+        simp only [heapSizeMap, amortizedMap]
         have := ih v (by simp at hsz; omega) hv
         have := ihe (by simp at hsz; omega) hrest
-        simp only [SZ_ARC, SZ_STRING, SZ_VALUE, ARC_HDR] at *
         omega
     cases h with
     | scalar => simp [heapSize, amortized]
     | rel => simp [heapSize, amortized]
-    | str len cap rc =>
-      simp only [Unshared] at hu; obtain ⟨rfl, hc⟩ := hu
-      simp [heapSize, amortized, SZ_STRING, ARC_HDR]; omega
+    | str len stat rc =>
+      simp only [Unshared] at hu
+      rcases hu with hu | hu
+      · subst hu; simp [heapSize, amortized, arcstrShare, arcstrAlloc]
+      · subst hu; simp only [heapSize, amortized]; rw [arcstrShare_unshared]; exact Nat.le_refl _
     | vec len cap rc =>
       simp only [Unshared] at hu; obtain ⟨rfl, hc⟩ := hu
       simp [heapSize, amortized, ARC_HDR]; omega
@@ -185,7 +216,22 @@ theorem shares_le (x rc : Nat) (h : 0 < rc) : rc * (x / rc) ≤ x ∧ x < rc * (
     have := Nat.mod_lt x h
     rw [Nat.mul_comm] at *; omega
 
-/-- A `Relationship` value owns no heap (it is an id, value.rs:200), yet both
+/-- `concat_str` (value.rs, the `String + String` arm of `add_slow` since #3966): the
+empty result is arcstr's static `ArcStr::new()`, any other one allocation written with
+`a`'s bytes then `b`'s. -/
+def concatStr (a b : String) : String :=
+  if a.isEmpty && b.isEmpty then "" else a ++ b
+
+/-- `concat_str` is concatenation, the empty case included. -/
+theorem concatStr_eq (a b : String) : concatStr a b = a ++ b := by
+  unfold concatStr
+  split
+  · rename_i h
+    simp only [Bool.and_eq_true, String.isEmpty_iff] at h
+    obtain ⟨rfl, rfl⟩ := h; rfl
+  · rfl
+
+/-- A `Relationship` value owns no heap (it is an id, value.rs), yet both
 estimates charge it 24 bytes — a fixed over-count (suspicion; no user-visible effect
 known, relationships are never stored as attributes). -/
 theorem rel_charged : heapSize .rel = 24 ∧ amortized .rel = 24 := ⟨rfl, rfl⟩
@@ -198,7 +244,7 @@ def asciiLowerStr (s : List Char) : List Char := s.map lowerAscii
 
 def eqIC (a : String) (b : String) : Bool := asciiLowerStr a.toList == asciiLowerStr b.toList
 
-/-- `get_point_component` (value.rs:458): ASCII case-insensitive. -/
+/-- `get_point_component` (value.rs): ASCII case-insensitive. -/
 def pointComponent (widen : F → F) (la lo : F) (attr : String) : V F :=
   if eqIC attr "latitude" then .float (widen la)
   else if eqIC attr "longitude" then .float (widen lo)
@@ -210,7 +256,7 @@ theorem point_component_case (widen : F → F) (la lo : F) :
     pointComponent widen la lo "LATITUDE" = .float (widen la) := by
   simp [pointComponent, eqIC, asciiLowerStr] <;> decide
 
-/-- The part of `get_duration_component` (value.rs:608-634) before chrono is consulted:
+/-- The part of `get_duration_component` (value.rs) before chrono is consulted:
 unknown names error, `weeks` is always `0.0`. -/
 def durationComponentPre (zero : F) (c : String) : Option (Except String (V F)) :=
   let known := ["years", "months", "weeks", "days", "hours", "minutes", "seconds"]
@@ -223,7 +269,7 @@ live; openCypher expects 2). -/
 theorem duration_weeks_zero (zero : F) : durationComponentPre zero "weeks" = some (.ok (.float zero)) := by
   simp [durationComponentPre, eqIC, asciiLowerStr] <;> decide
 
-/-- `get_attr` dispatch (value.rs:439); temporal component extractors are parameters
+/-- `get_attr` dispatch (value.rs); temporal component extractors are parameters
 (chrono-backed). -/
 def getAttr (widen : F → F) (dt d t du : Int → String → Except String (V F)) (v : V F) (attr : String) :
     Except String (V F) :=
@@ -252,7 +298,7 @@ def getNumeric (ofInt : Int → F) (zero : F) : V F → Option F
   | .null => some zero
   | _ => none   -- unreachable!() panics
 
-/-- `validate_args_domain` (mod.rs:862) calls `get_numeric` on `args[1]` of
+/-- `validate_args_domain` (mod.rs) calls `get_numeric` on `args[1]` of
 `percentile*` after `validate_args_type`: with the declared `Int | Float` slot (and the
 explicit Null test) the panic arm is dead. -/
 theorem getNumeric_after_validation (ofInt : Int → F) (zero : F) (v : V F)
@@ -267,10 +313,10 @@ def partialCmp (fc : FloatCmp F) (a b : V F) : Option Ordering :=
 theorem partialCmp_null (fc : FloatCmp F) (a : V F) : partialCmp fc .null a = none := by
   cases a <;> simp [partialCmp, cmpV]
 
-/-! `Point::validate` was removed in #3301: `point()` checks NaN and range in `point_from_map_entries`
+/-! There is no `Point::validate`: `point()` checks NaN and range in `point_from_map_entries`
 (`proofs/functions_temporal` `SpatialFns.pointFromMapEntries`). -/
 
-/-! ## JSON of a Float (value.rs:1591) -/
+/-! ## JSON of a Float (value.rs) -/
 
 /-- NaN/±∞ are emitted as JSON `null` (valid JSON; C emits `nan`, live). -/
 def jsonFloat (display : FC → String) : FC → String
@@ -293,8 +339,8 @@ theorem dedup_second_seen (seen : List Nat) (h : Nat) :
 theorem dedup_first_unseen (seen : List Nat) (h : Nat) (hn : h ∉ seen) : (dedupStep seen h).1 = false := by
   simp [dedupStep, hn]
 
-/-! ## v19 value codec (`Encode<19>` value.rs:2068; `Decode<19>` before #3339 — the current
-decoder `decode_value` value.rs:2166 is `decodeValue` in Nesting.lean) -/
+/-! ## v19 value codec (`Encode<19>` value.rs; the uncapped `Decode<19>` — the current
+decoder `decode_value` value.rs is `decodeValue` in Nesting.lean) -/
 
 def T_NULL : Nat := 2 ^ 15
 def T_BOOL : Nat := 2 ^ 12
@@ -370,10 +416,9 @@ def readVec (bytes : List Nat) : Option (List F) :=
   if body.length < 4 * dim then none
   else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
 
-/- Historical `Decode<19>` before #3339 (b080a44c1; value.rs:2131 at 4a4f2a72f): no depth
-bound, so `GRAPH.RESTORE` input recursed once per `T_ARRAY` header. Fuel bounds the nesting.
-The current decoder is `decodeValue` (Nesting.lean). -/
-def pre3339_decode : Nat → List (Tok F) → Option (V F × List (Tok F))
+/- `Decode<19>` without the nesting cap (fuel bounds the recursion). The current decoder is
+`decodeValue` (Nesting.lean), proved equal to this one on values within the cap. -/
+def decodeUncapped : Nat → List (Tok F) → Option (V F × List (Tok F))
   | 0, _ => none
   | fuel + 1, .u tag :: rest =>
     if tag = T_NULL then some (.null, rest)
@@ -407,7 +452,7 @@ def pre3339_decode : Nat → List (Tok F) → Option (V F × List (Tok F))
 where
   decodeN : Nat → Nat → List (Tok F) → Option (List (V F) × List (Tok F))
   | _, 0, r => some ([], r)
-  | fuel, n + 1, r => match pre3339_decode fuel r with
+  | fuel, n + 1, r => match decodeUncapped fuel r with
     | some (x, r') => (decodeN fuel n r').map (fun (xs, r'') => (x :: xs, r''))
     | none => none
 
@@ -465,52 +510,52 @@ theorem readVec_vecBytes (v : List F) (hl : v.length < 2 ^ 32) : readVec co (vec
 
 /-- **Codec roundtrip**: every storable value decodes to itself, leaving the rest of
 the stream untouched (fuel: any bound above the value's size). -/
-theorem pre3339_decode_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel → Storable v →
-    pre3339_decode co fuel (encode co v ++ rest) = some (v, rest) := by
+theorem decodeUncapped_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel → Storable v →
+    decodeUncapped co fuel (encode co v ++ rest) = some (v, rest) := by
   intro fuel
   induction fuel with
   | zero => intro v _ h; omega
   | succ f ih =>
     intro v rest hs hst
     have hN : ∀ (l : List (V F)) (r : List (Tok F)), sizeOf l < f → StorableList l →
-        pre3339_decode.decodeN co f l.length (encodeList co l ++ r) = some (l, r) := by
+        decodeUncapped.decodeN co f l.length (encodeList co l ++ r) = some (l, r) := by
       intro l
       induction l with
-      | nil => intro r _ _; simp [encodeList, pre3339_decode.decodeN]
+      | nil => intro r _ _; simp [encodeList, decodeUncapped.decodeN]
       | cons x xs ihl =>
         intro r hsz hsl
         simp only [StorableList] at hsl
-        simp only [encodeList, List.length_cons, List.append_assoc, pre3339_decode.decodeN]
+        simp only [encodeList, List.length_cons, List.append_assoc, decodeUncapped.decodeN]
         rw [ih x _ (by simp at hsz; omega) hsl.1]
         simp [ihl r (by simp at hsz; omega) hsl.2]
     cases v with
-    | bool b => cases b <;> simp [encode, pre3339_decode, T_NULL, T_BOOL]
-    | int i => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64]
-    | float x => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE]
-    | str s => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, co.lossy_utf8]
+    | bool b => cases b <;> simp [encode, decodeUncapped, T_NULL, T_BOOL]
+    | int i => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64]
+    | float x => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE]
+    | str s => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, co.lossy_utf8]
     | list l =>
       simp only [Storable] at hst
       simp only [encode, List.cons_append, List.nil_append]
-      simp only [pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
+      simp only [decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
       simp [hN l rest (by simp at hs; omega) hst]
     | point la lo =>
-      simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
+      simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
         co.narrow_widen]
     | vec v =>
       simp only [Storable] at hst
-      simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
+      simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
         T_VECTOR_F32, readVec_vecBytes co v hst]
-    | datetime t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | datetime t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME]
-    | date t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | date t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE]
-    | time t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | time t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME]
-    | duration t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | duration t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME, T_DURATION]
     | null =>
       simp only [encode, List.cons_append, List.nil_append]
-      unfold pre3339_decode
+      unfold decodeUncapped
       simp only [ite_true]
     | map _ => simp [Storable] at hst
     | node _ => simp [Storable] at hst

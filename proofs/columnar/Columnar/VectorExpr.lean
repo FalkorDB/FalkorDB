@@ -9,24 +9,24 @@ Every lane is compared against the per-row definition: the `Value` operator
 
 | here | there |
 | --- | --- |
-| `CmpOp`, `CmpOp.flip` | `CmpOp`, `CmpOp::flip` (`vectorized.rs:58-94`) |
-| `CmpOp.ofIR` | `CmpOp::from_expr_ir` (`vectorized.rs:70-80`) |
-| `Flag`, `compareFloats`, `compareValue` | `DisjointOrNull`, `compare_floats` (`value.rs:1801`), `compare_value` numeric/null arms (`value.rs:1225-1270`); other shapes abstract (`other`) |
-| `compareValues` | `compare_values` (`vectorized.rs:239-271`) |
+| `CmpOp`, `CmpOp.flip` | `CmpOp`, `CmpOp::flip` (`vectorized.rs`) |
+| `CmpOp.ofIR` | `CmpOp::from_expr_ir` (`vectorized.rs`) |
+| `Flag`, `compareFloats`, `compareValue` | `DisjointOrNull`, `compare_floats` (`value.rs`), `compare_value` numeric/null arms (`value.rs`); other shapes abstract (`other`) |
+| `compareValues` | `compare_values` (`vectorized.rs`) |
 | `icmp`, `fcmp` | the primitive `==,!=,<,<=,>,>=` on `i64` / `f64` |
-| `kernelI`, `kernelF` | `compare_i64_column` / `compare_f64_column` (`vectorized.rs:105-210`), `compare_i64_pairs` / `compare_f64_pairs` + `mask_out_nulls` (`vector_expr.rs:797-853`) |
-| `kernelV` | `compare_value_column_3vl` / `compare_value_column` (`vectorized.rs:229-293`) |
-| `EC` | `ExprColumn` (`vector_expr.rs:66-75`); `EC.get` = `ExprColumn::get` (`:80-109`) |
-| `EC.isNull`, `EC.constNull`, `EC.nullsOrNone`, `unionNulls` | `is_null`, `constant_nullness`, `nulls_or_none`, `union_nulls` (`vector_expr.rs:127-189`) |
-| `EC.intoValues` | `ExprColumn::into_values` (`vector_expr.rs:114-123`) |
-| `compareColumns` | `compare_columns` (`vector_expr.rs:733-794`) |
-| `wrap`, `valueArith` | `i64::wrapping_{add,sub,mul,rem}` (`Int / Int` is `checked_div`, an error on `MIN / -1`: `Arith.lean`) and `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs:904-1170`) |
-| `intLane`, `floatLane`, `floatOperand`, `arithmetic` | `int_lane`, `float_lane`, `float_operand`, `arithmetic` (`vector_expr.rs:880-994`) |
-| `negate`, `notRow` | `negate_bools` (`vector_expr.rs:856-875`) / per-row `ExprIR::Not` (`eval.rs:708-717`) |
-| `caseCol`, `caseRow` | `VectorEval::eval_case` (`vector_expr.rs:477-551`) / `ExprEval::eval_case` (`eval.rs:485-518`) |
-| `foldCall` | `eval_function` scalar folding (`vector_expr.rs:604-622`) |
-| `evalVariable` | `VectorEval::eval_variable` (`vector_expr.rs:309-328`) |
-| `filterPass` | `FilterOp` mask read (`filter.rs:69-86`) |
+| `kernelI`, `kernelF` | `compare_i64_column` / `compare_f64_column` (`vectorized.rs`), `compare_i64_pairs` / `compare_f64_pairs` + `mask_out_nulls` (`vector_expr.rs`) |
+| `kernelV` | `compare_value_column_3vl` / `compare_value_column` (`vectorized.rs`) |
+| `EC` | `ExprColumn` (`vector_expr.rs`); `EC.get` = `ExprColumn::get` |
+| `EC.isNull`, `EC.constNull`, `EC.nullsOrNone`, `unionNulls` | `is_null`, `constant_nullness`, `nulls_or_none`, `union_nulls` (`vector_expr.rs`) |
+| `EC.intoValues` | `ExprColumn::into_values` (`vector_expr.rs`) |
+| `compareColumns` | `compare_columns` (`vector_expr.rs`) |
+| `wrap`, `valueArith` | `i64::wrapping_{add,sub,mul,rem}` (`Int / Int` is `checked_div`, an error on `MIN / -1`: `Arith.lean`) and `impl Add/Sub/Mul/Div/Rem for Value` (`value.rs`) |
+| `intLane`, `floatLane`, `floatOperand`, `arithmetic` | `int_lane`, `float_lane`, `float_operand`, `arithmetic` (`vector_expr.rs`) |
+| `negate`, `notRow` | `negate_bools` (`vector_expr.rs`) / per-row `ExprIR::Not` (`eval.rs`) |
+| `caseCol`, `caseRow` | `VectorEval::eval_case` (`vector_expr.rs`) / `ExprEval::eval_case` (`eval.rs`) |
+| `foldCall` | `eval_function` scalar folding (`vector_expr.rs`) |
+| `evalVariable` | `VectorEval::eval_variable` (`vector_expr.rs`) |
+| `filterPass` | `FilterOp` mask read (`filter.rs`) |
 -/
 
 namespace Columnar
@@ -52,8 +52,8 @@ def compareFloats (a b : F) : Ordering × Flag :=
   | some o => (o, .none)
   | none => (.lt, .nan)
 
-/-- `compare_value` (value.rs:1255-1303): faithful on `Int`/`Float`/`Null` (the null arms
-order by `OrderedEnum::order`, value.rs:1299-1301); `other` stands for every remaining arm
+/-- `compare_value` (value.rs): faithful on `Int`/`Float`/`Null` (the null arms
+order by `OrderedEnum::order`, value.rs); `other` stands for every remaining arm
 (bools, strings, lists, maps, points, temporal, disjoint types, …), which the lanes never
 inspect. -/
 def compareValue (other : V F → V F → Ordering × Flag) : V F → V F → Ordering × Flag
@@ -65,7 +65,7 @@ def compareValue (other : V F → V F → Ordering × Flag) : V F → V F → Or
   | a, .null => (compare a.order (V.null : V F).order, .comparedNull)
   | a, b => other a b
 
-/-- `compare_values` (`vectorized.rs:239-272`; `Neq` arm since #2917 7fdf06a0e: NaN and
+/-- `compare_values` (`vectorized.rs`; `Neq` arm since #2917 7fdf06a0e: NaN and
 disjoint types are unequal). -/
 def compareValues (other : V F → V F → Ordering × Flag) (a b : V F) (op : CmpOp) : Option Bool :=
   let (ord, flag) := compareValue other a b
@@ -288,7 +288,7 @@ theorem Bits.isNull_ofFn (n : Nat) (p : Nat → Bool) (i : Nat) (h : i < n) :
     Bits.isNull ((List.range n).map p) i = p i := by
   simp [Bits.isNull, List.getElem?_range h]
 
-/-- `union_nulls` (`vector_expr.rs:168-189`). -/
+/-- `union_nulls` (`vector_expr.rs`). -/
 def unionNulls (l r : EC F) (len : Nat) : Bits :=
   match l.constNull, r.constNull with
   | some true, _ => Bits.all len
@@ -388,7 +388,7 @@ theorem unionNulls_length (l r : EC F) (len : Nat) (hl : l.WF len) (hr : r.WF le
 
 /-! ## `compare_columns` -/
 
-/-- The typed lanes of `compare_columns` (`vector_expr.rs:740-769`). -/
+/-- The typed lanes of `compare_columns` (`vector_expr.rs`). -/
 def typedLane (lhs rhs : EC F) (op : CmpOp) (nulls : Bits) : Option (List Bool) :=
   match lhs, rhs with
   | .ints d _, .scalar (.int t) => some (kernelI op d (List.replicate d.length t) nulls)
@@ -403,7 +403,7 @@ def typedLane (lhs rhs : EC F) (op : CmpOp) (nulls : Bits) : Option (List Bool) 
   | .floats a _, .floats b _ => some (kernelF op a b nulls)
   | _, _ => none
 
-/-- The generic lanes (`vector_expr.rs:777-793`). -/
+/-- The generic lanes (`vector_expr.rs`). -/
 def genericLane (other : V F → V F → Ordering × Flag) (lhs rhs : EC F) (op : CmpOp) (len : Nat) : EC F :=
   match rhs, lhs with
   | .scalar c, .values d => let r := kernelV other op d c; .bools r.1 r.2
@@ -411,7 +411,7 @@ def genericLane (other : V F → V F → Ordering × Flag) (lhs rhs : EC F) (op 
     .bools ((List.range len).map (fun i => (compareValues other (lhs.get i) (rhs.get i) op).getD false))
       ((List.range len).map (fun i => (compareValues other (lhs.get i) (rhs.get i) op).isNone))
 
-/-- `compare_columns` (`vector_expr.rs:733-794`). -/
+/-- `compare_columns` (`vector_expr.rs`). -/
 def compareColumns (other : V F → V F → Ordering × Flag) (lhs rhs : EC F) (op : CmpOp) (len : Nat) : EC F :=
   match typedLane lhs rhs op (unionNulls lhs rhs len) with
   | some mask => .bools mask (unionNulls lhs rhs len)
