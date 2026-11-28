@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "date": "2026-11-28",
+  "run_url": "https://github.com/FalkorDB/FalkorDB/actions/runs/46088108363",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:551329ab7205066bc356a032a0adfcfb2c71e6697658063858cda645b61c161b",
+    "commit": "3bba59f2f8703614f5ea5b73e4b9f65fe1bf55f1",
+    "label": "main@3bba59f"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "previous_green_commit": "98a19c3b932b824dc9b7730e139dd6bf4204ad56",
+  "status": "skipped",
+  "skip_reason": "main has not moved since the 2026-11-27 nightly (red, https://github.com/FalkorDB/FalkorDB/actions/runs/45917119044): same candidate main@3bba59f and baseline 6.2.1",
+  "checks": []
+}
