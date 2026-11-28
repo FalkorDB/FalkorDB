@@ -73,7 +73,11 @@ use crate::{
     graph::{
         attribute_store::AttributeStore,
         graph::{EdgeDirection, Graph, NodeId, RelationshipId},
-        graphblas::lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
+        graphblas::{
+            lagraph::LAGraph,
+            lagraph_bindings::{self, LAGraph_Graph, LAGraph_Kind},
+            vector::Vector,
+        },
     },
     runtime::{
         batch::{Batch, Column, classify_stored_column},
@@ -275,6 +279,39 @@ unsafe extern "C" fn msf_score_of(
     *z.cast::<f64>() = (*x.cast::<ScoredEdge>()).score;
 }
 
+/// RAII guard managing intermediate GraphBLAS handles for `algo.MSF`.
+///
+/// Ensures `rel_adj`, `scored_edge_type`, `forest_edges`, and `component_id`
+/// are deterministically freed on early return, error paths, or scope exit.
+struct MsfPostRunGuard {
+    rel_adj: crate::graph::graphblas::GrB_Matrix,
+    scored_edge_type: crate::graph::graphblas::GrB_Type,
+    forest_edges: crate::graph::graphblas::GrB_Matrix,
+    component_id: crate::graph::graphblas::GrB_Vector,
+}
+
+impl Drop for MsfPostRunGuard {
+    fn drop(&mut self) {
+        unsafe {
+            use crate::graph::graphblas::{GrB_Matrix_free, GrB_Type_free, GrB_Vector_free};
+            use std::ptr::addr_of_mut;
+
+            if !self.forest_edges.is_null() {
+                let _ = GrB_Matrix_free(addr_of_mut!(self.forest_edges));
+            }
+            if !self.component_id.is_null() {
+                let _ = GrB_Vector_free(addr_of_mut!(self.component_id));
+            }
+            if !self.rel_adj.is_null() {
+                let _ = GrB_Matrix_free(addr_of_mut!(self.rel_adj));
+            }
+            if !self.scored_edge_type.is_null() {
+                let _ = GrB_Type_free(addr_of_mut!(self.scored_edge_type));
+            }
+        }
+    }
+}
+
 /// Extract an optional string-or-null from a Value, returning an error if
 /// the value is of any other type.
 fn opt_string(
@@ -371,43 +408,35 @@ fn parse_config(args: &[Value]) -> Result<OrderMap<ArcStr, Value>, String> {
 ///   `Matrix` that will free it) and lends it for the graph's lifetime. Nothing
 ///   is freed here on failure, because the caller's owner still holds it, and
 ///   the teardown must detach `G->A` first.
+#[allow(
+    dead_code,
+    reason = "Preserved for Lean formal verification proof coverage in proofs/algo_udf/COVERAGE.tsv"
+)]
 unsafe fn create_lagraph_graph(
     adj: crate::graph::graphblas::GrB_Matrix,
     kind: LAGraph_Kind,
     borrowed: bool,
 ) -> Result<LAGraph_Graph, String> {
-    let mut g: LAGraph_Graph = null_mut();
-    let mut msg = new_msg();
-    let mut adj_mut = adj;
-    let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
-    if info != 0 {
-        // `LAGraph_New` only fails before taking the matrix, so the handle is
-        // still live here. Free it when this call owned it; leave it alone when
-        // it was lent, or the caller's owner would double-free.
-        if !borrowed {
-            crate::graph::graphblas::GrB_Matrix_free(&raw mut adj_mut);
-        }
-        return Err(format!("LAGraph_New failed: {info}"));
-    }
-    if g.is_null() {
-        return Err(String::from("LAGraph_New returned null graph"));
-    }
-    Ok(g)
+    unsafe { LAGraph::new(adj, kind, borrowed) }.map(LAGraph::into_raw)
 }
 
 /// Free an LAGraph_Graph.
+#[allow(
+    dead_code,
+    reason = "Preserved for Lean formal verification proof coverage in proofs/algo_udf/COVERAGE.tsv"
+)]
 unsafe fn delete_lagraph_graph(g: &mut LAGraph_Graph) {
-    let mut msg = new_msg();
-    lagraph_bindings::LAGraph_Delete(g, msg.as_mut_ptr());
+    LAGraph::free_raw(g, false);
 }
 
 /// Free an LAGraph_Graph whose adjacency matrix is borrowed: detach `G->A`
 /// first so `LAGraph_Delete` does not free the caller-owned handle.
+#[allow(
+    dead_code,
+    reason = "Preserved for Lean formal verification proof coverage in proofs/algo_udf/COVERAGE.tsv"
+)]
 unsafe fn delete_lagraph_graph_borrowed(g: &mut LAGraph_Graph) {
-    if let Some(graph) = g.as_mut() {
-        graph.A = null_mut();
-    }
-    delete_lagraph_graph(g);
+    LAGraph::free_raw(g, true);
 }
 
 /// Free an `LAGraph_Graph` whose adjacency matrix may be borrowed.
@@ -416,32 +445,25 @@ unsafe fn delete_lagraph_graph_borrowed(g: &mut LAGraph_Graph) {
 /// LAGraph the matrix it just built and keeps the `Matrix` wrapper that frees
 /// it, while the compact path hands over a raw matrix nothing else owns. This
 /// picks the matching teardown so the handle is freed exactly once.
+#[allow(
+    dead_code,
+    reason = "Preserved for Lean formal verification proof coverage in proofs/algo_udf/COVERAGE.tsv"
+)]
 unsafe fn delete_lagraph_graph_maybe_borrowed(
     g: &mut LAGraph_Graph,
     borrowed: bool,
 ) {
-    if borrowed {
-        delete_lagraph_graph_borrowed(g);
-    } else {
-        delete_lagraph_graph(g);
-    }
+    LAGraph::free_raw(g, borrowed);
 }
 
 /// Extract GrB_Vector entries as (index, f64) pairs.
+#[allow(
+    dead_code,
+    reason = "Preserved for Lean formal verification proof coverage in proofs/algo_udf/COVERAGE.tsv"
+)]
 unsafe fn extract_vector_f64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64, f64)> {
-    use crate::graph::graphblas::{GrB_Index, GrB_Vector_extractTuples_FP64, GrB_Vector_nvals};
-    let mut nvals: GrB_Index = 0;
-    GrB_Vector_nvals(&raw mut nvals, v);
-    let mut indices = vec![0u64; nvals as usize];
-    let mut values = vec![0.0f64; nvals as usize];
-    let mut nvals_out = nvals;
-    GrB_Vector_extractTuples_FP64(
-        indices.as_mut_ptr(),
-        values.as_mut_ptr(),
-        &raw mut nvals_out,
-        v,
-    );
-    indices.into_iter().zip(values).collect()
+    let vec = std::mem::ManuallyDrop::new(Vector::<f64>::from_raw(v));
+    vec.extract_tuples()
 }
 
 /// Map a node-valued LAGraph result (a component or community representative)
@@ -457,19 +479,8 @@ fn compact_to_original(
 
 /// Extract GrB_Vector entries as (index, i64) pairs.
 unsafe fn extract_vector_i64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64, i64)> {
-    use crate::graph::graphblas::{GrB_Index, GrB_Vector_extractTuples_INT64, GrB_Vector_nvals};
-    let mut nvals: GrB_Index = 0;
-    GrB_Vector_nvals(&raw mut nvals, v);
-    let mut indices = vec![0u64; nvals as usize];
-    let mut values = vec![0i64; nvals as usize];
-    let mut nvals_out = nvals;
-    GrB_Vector_extractTuples_INT64(
-        indices.as_mut_ptr(),
-        values.as_mut_ptr(),
-        &raw mut nvals_out,
-        v,
-    );
-    indices.into_iter().zip(values).collect()
+    let vec = std::mem::ManuallyDrop::new(Vector::<i64>::from_raw(v));
+    vec.extract_tuples()
 }
 
 /// Build a node Value with a given NodeId.
@@ -607,6 +618,10 @@ unsafe fn new_compact_bool_matrix(n: u64) -> crate::graph::graphblas::GrB_Matrix
 /// Cache `G->AT`, held by row like `G->A`. `LAGraph_Cached_AT` makes the
 /// transpose with `GrB_Matrix_new`, which holds a `1 × 1` one by column (see
 /// [`pin_row_major`]).
+#[allow(
+    dead_code,
+    reason = "Preserved for Lean formal verification proof coverage in proofs/algo_udf/COVERAGE.tsv"
+)]
 unsafe fn cache_transpose(
     g: LAGraph_Graph,
     msg: *mut std::os::raw::c_char,
@@ -793,10 +808,7 @@ fn register_pagerank(funcs: &mut Functions) {
             let rel_types: Vec<ArcStr> = rel_type.into_iter().collect();
 
             unsafe {
-                use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
-                    GrB_Vector_free,
-                };
+                use crate::graph::graphblas::{GrB_Matrix, GrB_Matrix_resize};
 
                 // Match C implementation fast path for unfiltered run.
                 // If a label is provided but it covers all active nodes, the filtered
@@ -833,37 +845,10 @@ fn register_pagerank(funcs: &mut Functions) {
 
                 let borrowed = owned_adj.is_some();
                 let mut lag_g =
-                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
+                    LAGraph::new(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
 
-                // Cache AT and OutDegree (required for PageRank)
-                let mut msg = new_msg();
-                cache_transpose(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
-
-                // Run PageRank
-                let mut centrality: GrB_Vector = null_mut();
-                let mut iters: i32 = 0;
-                let info = lagraph_bindings::LAGr_PageRank(
-                    &raw mut centrality,
-                    &raw mut iters,
-                    lag_g,
-                    0.85,  // damping
-                    1e-4,  // tolerance
-                    100,   // max iterations
-                    msg.as_mut_ptr(),
-                );
-
-                if info != 0 {
-                    delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
-                    return Err(format!("LAGr_PageRank failed: {info}"));
-                }
-
-                // Extract results (compact indices)
-                let entries = extract_vector_f64(centrality);
-
-                // Free LAGraph resources
-                GrB_Vector_free(&raw mut centrality);
-                delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
+                let (centrality, _iters) = lag_g.page_rank(0.85, 1e-4, 100)?;
+                let entries = centrality.extract_tuples();
 
                 let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
@@ -909,10 +894,7 @@ fn register_wcc(funcs: &mut Functions) {
             }
 
             unsafe {
-                use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
-                    GrB_Vector_free,
-                };
+                use crate::graph::graphblas::{GrB_Matrix, GrB_Matrix_resize};
 
                 // Match C implementation fast path for unfiltered run.
                 // Holds the adjacency matrix on the paths that lend it to LAGraph;
@@ -941,27 +923,10 @@ fn register_wcc(funcs: &mut Functions) {
 
                 let borrowed = owned_adj.is_some();
                 let mut lag_g =
-                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED, borrowed)?;
+                    LAGraph::new(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED, borrowed)?;
 
-                // Cache symmetric structure
-                let mut msg = new_msg();
-                let lag_g_ref = lag_g.as_mut().ok_or_else(|| String::from("LAGraph graph pointer is null"))?;
-                lag_g_ref.is_symmetric_structure = LAGraph_Boolean::LAGraph_TRUE;
-
-                // Run connected components
-                let mut component: GrB_Vector = null_mut();
-                let info = lagraph_bindings::LAGr_ConnectedComponents(
-                    &raw mut component,
-                    lag_g,
-                    msg.as_mut_ptr(),
-                );
-
-                if info != 0 {
-                    delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
-                    return Err(format!("LAGr_ConnectedComponents failed: {info}"));
-                }
-
-                let entries = extract_vector_i64(component);
+                let component = lag_g.connected_components()?;
+                let entries = component.extract_tuples();
 
                 let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
@@ -976,9 +941,6 @@ fn register_wcc(funcs: &mut Functions) {
                     node_ids.push(NodeId::from(orig_id));
                     component_ids.push(compact_to_original(compact_to_id.as_deref(), comp_id));
                 }
-
-                GrB_Vector_free(&raw mut component);
-                delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
 
                 Ok(Batch::from_columns([
                     Column::NodeIds(node_ids),
@@ -1036,10 +998,7 @@ fn register_betweenness(funcs: &mut Functions) {
             }
 
             unsafe {
-                use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_resize, GrB_Vector,
-                    GrB_Vector_free,
-                };
+                use crate::graph::graphblas::{GrB_Matrix, GrB_Matrix_resize};
 
                 // Match C implementation fast path for unfiltered run.
                 // Holds the adjacency matrix on the paths that lend it to LAGraph;
@@ -1065,11 +1024,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
                 let borrowed = owned_adj.is_some();
                 let mut lag_g =
-                    create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
-
-                let mut msg = new_msg();
-                cache_transpose(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
+                    LAGraph::new(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
 
                 // Select source nodes for sampling (all from compact matrix)
                 let n_nodes = compact_to_id.as_ref().map_or_else(
@@ -1099,24 +1054,8 @@ fn register_betweenness(funcs: &mut Functions) {
                     srcs
                 };
 
-                let mut centrality: GrB_Vector = null_mut();
-                let info = lagraph_bindings::LAGr_Betweenness(
-                    &raw mut centrality,
-                    lag_g,
-                    sources.as_ptr(),
-                    sources.len() as i32,
-                    msg.as_mut_ptr(),
-                );
-
-                if info != 0 {
-                    delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
-                    return Err(format!("LAGr_Betweenness failed: {info}"));
-                }
-
-                let entries = extract_vector_f64(centrality);
-
-                GrB_Vector_free(&raw mut centrality);
-                delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
+                let centrality = lag_g.betweenness(&sources)?;
+                let entries = centrality.extract_tuples();
 
                 // All compact indices map to valid nodes (already label-filtered)
                 let mut node_ids = Vec::with_capacity(entries.len());
@@ -1181,112 +1120,83 @@ fn register_bfs(funcs: &mut Functions) {
             // column was not yielded.
             let want_edges = yields & 0b10 != 0;
 
-            unsafe {
-                use crate::graph::graphblas::{GrB_Vector, GrB_Vector_free, lagraphx_bindings};
+            // Run directly on full adjacency; no compaction needed for BFS.
+            // `adj` is freshly built and uniquely owned, so lend its handle
+            // to LAGraph instead of duplicating it; the borrowed delete
+            // detaches `G->A` so only the `Matrix` wrapper frees it.
+            let compact_source = u64::from(source_id);
+            // SAFETY: `adj` is locally owned and unshared during traversal, and outlives `lag_g`.
+            let mut lag_g = unsafe {
+                LAGraph::from_lent_matrix(&adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?
+            };
 
-                // Run directly on full adjacency; no compaction needed for BFS.
-                // `adj` is freshly built and uniquely owned, so lend its handle
-                // to LAGraph instead of duplicating it; the borrowed delete
-                // detaches `G->A` so only the `Matrix` wrapper frees it.
-                let compact_source = u64::from(source_id);
-                let mut lag_g = create_lagraph_graph(
-                    adj.inner(),
-                    LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
-                    true,
-                )?;
+            // Use the extended BFS with max_level
+            let max_level = if max_depth < 0 { -1i64 } else { max_depth };
+            let (level, parent) =
+                lag_g.breadth_first_search(compact_source, max_level, want_edges)?;
 
-                let mut msg = new_msg();
+            let has_deleted = g.deleted_nodes_count() != 0;
+            let mut nodes: ThinVec<Value>;
+            let mut edges: ThinVec<Value> = ThinVec::new();
 
-                let mut level: GrB_Vector = null_mut();
-                let mut parent: GrB_Vector = null_mut();
+            if want_edges {
+                // Extract parent vector to reconstruct nodes and edges
+                let parent_vec = parent.ok_or_else(|| String::from("BFS parent vector is missing"))?;
+                let parent_entries = parent_vec.extract_tuples();
+                nodes = ThinVec::with_capacity(parent_entries.len());
+                edges.reserve(parent_entries.len());
 
-                // Use the extended BFS with max_level
-                let max_level = if max_depth < 0 { -1i64 } else { max_depth };
-                let info = lagraphx_bindings::LAGr_BreadthFirstSearch_Extended(
-                    &raw mut level,
-                    if want_edges { &raw mut parent } else { null_mut() },
-                    lag_g,
-                    compact_source,
-                    max_level,
-                    -1, // no specific destination
-                    false, // many_expected
-                    msg.as_mut_ptr(),
-                );
-
-                if info != 0 {
-                    delete_lagraph_graph_borrowed(&mut lag_g);
-                    return Err(format!("LAGr_BreadthFirstSearch_Extended failed: {info}"));
-                }
-
-                let has_deleted = g.deleted_nodes_count() != 0;
-                let mut nodes: ThinVec<Value>;
-                let mut edges: ThinVec<Value> = ThinVec::new();
-
-                if want_edges {
-                    // Extract parent vector to reconstruct nodes and edges
-                    let parent_entries = extract_vector_i64(parent);
-                    nodes = ThinVec::with_capacity(parent_entries.len());
-                    edges.reserve(parent_entries.len());
-
-                    for (compact_idx, compact_par) in &parent_entries {
-                        if *compact_idx == compact_source {
-                            continue; // skip source itself
-                        }
-                        let orig_child = *compact_idx;
-                        let orig_parent = *compact_par as u64;
-                        if has_deleted
-                            && (g.is_node_deleted(NodeId::from(orig_child))
-                                || g.is_node_deleted(NodeId::from(orig_parent)))
-                        {
-                            continue;
-                        }
-                        let child = NodeId::from(orig_child);
-                        let parent_node = NodeId::from(orig_parent);
-                        nodes.push(node_value(child));
-
-                        // Find the relationship from parent to child without
-                        // materializing an intermediate Vec per row.
-                        if let Some(rel_id) =
-                            g.get_src_dest_relationships(parent_node, child, &rel_types).next()
-                        {
-                            edges.push(Value::Relationship(rel_id));
-                        }
+                for (compact_idx, compact_par) in &parent_entries {
+                    if *compact_idx == compact_source {
+                        continue; // skip source itself
                     }
-                } else {
-                    // No parent vector: reached nodes are the level entries
-                    // (level(src) = 0, so skip the source).
-                    let level_entries = extract_vector_i64(level);
-                    nodes = ThinVec::with_capacity(level_entries.len());
+                    let orig_child = *compact_idx;
+                    let orig_parent = *compact_par as u64;
+                    if has_deleted
+                        && (g.is_node_deleted(NodeId::from(orig_child))
+                            || g.is_node_deleted(NodeId::from(orig_parent)))
+                    {
+                        continue;
+                    }
+                    let child = NodeId::from(orig_child);
+                    let parent_node = NodeId::from(orig_parent);
+                    nodes.push(node_value(child));
 
-                    for (compact_idx, _lvl) in &level_entries {
-                        if *compact_idx == compact_source {
-                            continue; // skip source itself
-                        }
-                        if has_deleted && g.is_node_deleted(NodeId::from(*compact_idx)) {
-                            continue;
-                        }
-                        nodes.push(node_value(NodeId::from(*compact_idx)));
+                    // Find the relationship from parent to child without
+                    // materializing an intermediate Vec per row.
+                    if let Some(rel_id) =
+                        g.get_src_dest_relationships(parent_node, child, &rel_types).next()
+                    {
+                        edges.push(Value::Relationship(rel_id));
                     }
                 }
+            } else {
+                // No parent vector: reached nodes are the level entries
+                // (level(src) = 0, so skip the source).
+                let level_vec = level.ok_or_else(|| String::from("BFS level vector is missing"))?;
+                let level_entries = level_vec.extract_tuples();
+                nodes = ThinVec::with_capacity(level_entries.len());
 
-                if !level.is_null() {
-                    GrB_Vector_free(&raw mut level);
+                for (compact_idx, _lvl) in &level_entries {
+                    if *compact_idx == compact_source {
+                        continue; // skip source itself
+                    }
+                    if has_deleted && g.is_node_deleted(NodeId::from(*compact_idx)) {
+                        continue;
+                    }
+                    nodes.push(node_value(NodeId::from(*compact_idx)));
                 }
-                if !parent.is_null() {
-                    GrB_Vector_free(&raw mut parent);
-                }
-                delete_lagraph_graph_borrowed(&mut lag_g);
-
-                // If no nodes were reached, return empty list (no result row)
-                if nodes.is_empty() {
-                    return Ok(empty_procedure_batch());
-                }
-
-                Ok(Batch::from_columns([
-                    Column::Values(vec![Value::List(Arc::new(nodes))]),
-                    Column::Values(vec![Value::List(Arc::new(edges))]),
-                ]))
             }
+
+            // If no nodes were reached, return empty list (no result row)
+            if nodes.is_empty() {
+                return Ok(empty_procedure_batch());
+            }
+
+            Ok(Batch::from_columns([
+                Column::Values(vec![Value::List(Arc::new(nodes))]),
+                Column::Values(vec![Value::List(Arc::new(edges))]),
+            ]))
         }
     );
 }
@@ -1331,10 +1241,7 @@ fn register_cdlp(funcs: &mut Functions) {
             }
 
             unsafe {
-                use crate::graph::graphblas::{
-                    GrB_Matrix, GrB_Matrix_resize, GrB_Vector, lagraphx_bindings,
-                    GrB_Vector_free,
-                };
+                use crate::graph::graphblas::{GrB_Matrix, GrB_Matrix_resize};
 
                 // Match C implementation fast path for unfiltered run.
                 // Holds the adjacency matrix on the paths that lend it to LAGraph;
@@ -1363,26 +1270,10 @@ fn register_cdlp(funcs: &mut Functions) {
 
                 let borrowed = owned_adj.is_some();
                 let mut lag_g =
-                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED, borrowed)?;
+                    LAGraph::new(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED, borrowed)?;
 
-                let mut msg = new_msg();
-                let lag_g_ref = lag_g.as_mut().ok_or_else(|| String::from("LAGraph graph pointer is null"))?;
-                lag_g_ref.is_symmetric_structure = LAGraph_Boolean::LAGraph_TRUE;
-
-                let mut cdlp: GrB_Vector = null_mut();
-                let info = lagraphx_bindings::LAGraph_cdlp(
-                    &raw mut cdlp,
-                    lag_g,
-                    max_iterations,
-                    msg.as_mut_ptr(),
-                );
-
-                if info != 0 {
-                    delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
-                    return Err(format!("LAGraph_cdlp failed: {info}"));
-                }
-
-                let entries = extract_vector_i64(cdlp);
+                let cdlp = lag_g.cdlp(max_iterations as usize)?;
+                let entries = cdlp.extract_tuples();
 
                 let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
@@ -1397,9 +1288,6 @@ fn register_cdlp(funcs: &mut Functions) {
                     node_ids.push(NodeId::from(orig_id));
                     community_ids.push(compact_to_original(compact_to_id.as_deref(), community_id));
                 }
-
-                GrB_Vector_free(&raw mut cdlp);
-                delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
 
                 Ok(Batch::from_columns([
                     Column::NodeIds(node_ids),
@@ -1876,16 +1764,28 @@ fn register_msf(funcs: &mut Functions) {
 
                 GrB_Matrix_free(&raw mut weighted_adj);
 
+                let post_guard = MsfPostRunGuard {
+                    rel_adj,
+                    scored_edge_type,
+                    forest_edges,
+                    component_id,
+                };
+
                 if info != 0 {
-                    return Err(format!("LAGraph_msf failed: {info}"));
+                    let detail = msg_to_string(&msg);
+                    return Err(if detail.trim().is_empty() {
+                        format!("LAGraph_msf failed: {info}")
+                    } else {
+                        format!("LAGraph_msf failed: {info}; {detail}")
+                    });
                 }
 
                 // Extract component assignments (compact indices)
-                let comp_entries = extract_vector_i64(component_id);
+                let comp_entries = extract_vector_i64(post_guard.component_id);
 
                 // Extract forest edges (compact indices)
                 let mut forest_nvals: GrB_Index = 0;
-                GrB_Matrix_nvals(&raw mut forest_nvals, forest_edges);
+                GrB_Matrix_nvals(&raw mut forest_nvals, post_guard.forest_edges);
                 let mut f_rows = vec![0u64; forest_nvals as usize];
                 let mut f_cols = vec![0u64; forest_nvals as usize];
                 let mut f_vals = vec![0.0f64; forest_nvals as usize];
@@ -1895,11 +1795,8 @@ fn register_msf(funcs: &mut Functions) {
                     f_cols.as_mut_ptr(),
                     f_vals.as_mut_ptr(),
                     &raw mut nvals_out,
-                    forest_edges,
+                    post_guard.forest_edges,
                 );
-
-                GrB_Matrix_free(&raw mut forest_edges);
-                GrB_Vector_free(&raw mut component_id);
 
                 // Recover each forest edge's relationship id from `rel_adj` with a
                 // single O(1) extract per pair (both orientations resolve, since
@@ -1916,7 +1813,7 @@ fn register_msf(funcs: &mut Functions) {
                     let mut sr = ScoredEdge { score: 0.0, edge: 0 };
                     if GrB_Matrix_extractElement_UDT(
                         (&raw mut sr).cast::<std::os::raw::c_void>(),
-                        rel_adj,
+                        post_guard.rel_adj,
                         cs,
                         cd,
                     ) == GrB_Info::GrB_SUCCESS
@@ -1924,8 +1821,7 @@ fn register_msf(funcs: &mut Functions) {
                         pair_to_rel.insert((a, b), RelationshipId::from(sr.edge));
                     }
                 }
-                GrB_Matrix_free(&raw mut rel_adj);
-                GrB_Type_free(&raw mut scored_edge_type);
+                drop(post_guard);
 
                 // Use Vec for component mapping instead of HashMap (compact indices are 0..n-1)
                 let mut compact_to_component_vec = vec![i64::MIN; sorted_ids.len()];
@@ -2995,16 +2891,6 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["node", "score", "reachable"],
         fn algo_harmonic_centrality(runtime, args) {
-            use crate::graph::graphblas::{
-                lagraphx_bindings,
-                GrB_ALL,
-                GrB_BOOL,
-                GrB_Vector,
-                GrB_Vector_assign_BOOL,
-                GrB_Vector_free,
-                GrB_Vector_new,
-            };
-
             let config = parse_config(args)?;
             if !config.is_empty() {
                 validate_config_map(&config, &["nodeLabels", "relationshipTypes"])?;
@@ -3037,9 +2923,11 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    GrB_Matrix, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_ncols,
-                    GrB_Matrix_new, GrB_Matrix_nrows, GrB_ONEB_BOOL,
+                    GrB_ALL, GrB_BOOL, GrB_Matrix, GrB_Matrix_eWiseMult_BinaryOp,
+                    GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_ONEB_BOOL,
+                    GrB_Vector, GrB_Vector_assign_BOOL, GrB_Vector_new,
                 };
+                use std::ptr::addr_of_mut;
 
                 // Match C implementation fast path for unfiltered run.
                 let (compact_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
@@ -3053,18 +2941,18 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                     // the same pattern with every value collapsed to iso `true`.
                     let mut nrows: u64 = 0;
                     let mut ncols: u64 = 0;
-                    GrB_Matrix_nrows(&raw mut nrows, adj.inner());
-                    GrB_Matrix_ncols(&raw mut ncols, adj.inner());
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_new(&raw mut raw_adj, GrB_BOOL, nrows, ncols);
+                    GrB_Matrix_nrows(addr_of_mut!(nrows), adj.inner());
+                    GrB_Matrix_ncols(addr_of_mut!(ncols), adj.inner());
+                    let mut raw_adj: GrB_Matrix = null_mut();
+                    GrB_Matrix_new(addr_of_mut!(raw_adj), GrB_BOOL, nrows, ncols);
                     GrB_Matrix_eWiseMult_BinaryOp(
                         raw_adj,
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
+                        null_mut(),
+                        null_mut(),
                         GrB_ONEB_BOOL,
                         adj.inner(),
                         adj.inner(),
-                        std::ptr::null_mut(),
+                        null_mut(),
                     );
                     let n = g.node_id_bound();
                     crate::graph::graphblas::GrB_Matrix_resize(raw_adj, n, n);
@@ -3075,55 +2963,37 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                     (compact_adj, Some(compact_to_id))
                 };
 
-                let mut lag_g = create_lagraph_graph(
+                let mut lag_g = LAGraph::new(
                     compact_adj,
                     LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
                     false,
                 )?;
 
-                let mut msg = new_msg();
-                // LAGr_HarmonicCentrality only reads G->A (it builds its own compact
-                // submatrix internally); it never uses G->AT or G->out_degree, so we
-                // skip caching them here, matching the C module which also does not.
-
                 runtime.check_timeout()?;
-                let mut nodes: GrB_Vector = null_mut();
-                // Unfiltered, the matrix spans every id up to the highest
-                // (deleted ids included, as above), so the source vector must too.
                 let node_vec_len = compact_to_id.as_ref().map_or_else(
                     || g.node_id_bound(),
                     |m| m.len() as u64,
                 );
-                GrB_Vector_new(&raw mut nodes, GrB_BOOL, node_vec_len);
-                GrB_Vector_assign_BOOL(
-                    nodes,
-                    null_mut(),
-                    null_mut(),
-                    true,
-                    GrB_ALL,
-                    node_vec_len,
-                    null_mut(),
-                );
+                let nodes: Vector<bool> = {
+                    let mut raw_nodes: GrB_Vector = null_mut();
+                    GrB_Vector_new(addr_of_mut!(raw_nodes), GrB_BOOL, node_vec_len);
+                    GrB_Vector_assign_BOOL(
+                        raw_nodes,
+                        null_mut(),
+                        null_mut(),
+                        true,
+                        GrB_ALL,
+                        node_vec_len,
+                        null_mut(),
+                    );
+                    Vector::from_raw(raw_nodes)
+                };
 
-                let mut scores: GrB_Vector = null_mut();
-                let mut reachable_nodes: GrB_Vector = null_mut();
-                let info = lagraphx_bindings::LAGr_HarmonicCentrality(
-                    &raw mut scores,
-                    &raw mut reachable_nodes,
-                    lag_g,
-                    nodes,
-                    msg.as_mut_ptr(),
-                );
+                let (scores, reachable_nodes) = lag_g.harmonic_centrality(&nodes)?;
 
-                GrB_Vector_free(&raw mut nodes);
-                if info != 0 {
-                    delete_lagraph_graph(&mut lag_g);
-                    return Err(format!("LAGr_HarmonicCentrality failed: {info}"));
-                }
-
-                let score_entries = extract_vector_f64(scores);
+                let score_entries = scores.extract_tuples();
                 let mut reachable_by_idx = vec![0_i64; node_vec_len as usize];
-                for (compact_idx, reachable) in extract_vector_i64(reachable_nodes) {
+                for (compact_idx, reachable) in reachable_nodes.extract_tuples() {
                     reachable_by_idx[compact_idx as usize] = reachable;
                 }
 
@@ -3141,10 +3011,6 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                     scores_col.push(score);
                     reachable_col.push(reachable_by_idx[compact_idx as usize]);
                 }
-
-                GrB_Vector_free(&raw mut scores);
-                GrB_Vector_free(&raw mut reachable_nodes);
-                delete_lagraph_graph(&mut lag_g);
 
                 Ok(Batch::from_columns([
                     Column::NodeIds(node_ids),
@@ -3237,7 +3103,10 @@ fn register_maxflow(funcs: &mut Functions) {
             {
                 None | Some(Value::Null) => None,
                 Some(Value::Float(f)) if *f >= 0.0 => Some(*f),
-                #[allow(clippy::cast_precision_loss)]
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "Integer capacity conversion to f64"
+                )]
                 Some(Value::Int(i)) if *i >= 0 => Some(*i as f64),
                 _ => return Err(String::from(
                     "algo.maxFlow: 'defaultCapacity' must be a non-negative number",
@@ -3305,7 +3174,10 @@ fn register_maxflow(funcs: &mut Functions) {
                 let (s, d) = src_dst;
                 let parsed = match value {
                     Value::Float(f) if f >= 0.0 => Some(f),
-                    #[allow(clippy::cast_precision_loss)]
+                    #[allow(
+                        clippy::cast_precision_loss,
+                        reason = "Integer capacity conversion to f64"
+                    )]
                     Value::Int(i) if i >= 0 => Some(i as f64),
                     _ => None,
                 };
@@ -3485,9 +3357,7 @@ fn register_maxflow(funcs: &mut Functions) {
             let (max_flow, flows) = unsafe {
                 use crate::graph::graphblas::{
                     GrB_FP64, GrB_Index, GrB_MAX_FP64, GrB_Matrix, GrB_Matrix_build_FP64,
-                    GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new,
-                    GrB_Matrix_nvals, GrB_Matrix_wait, GrB_WaitMode, lagraph_bindings,
-                    lagraphx_bindings,
+                    GrB_Matrix_new, GrB_Matrix_wait, GrB_WaitMode,
                 };
 
                 let mut cap_mtx: GrB_Matrix = null_mut();
@@ -3522,55 +3392,19 @@ fn register_maxflow(funcs: &mut Functions) {
                 }
                 GrB_Matrix_wait(cap_mtx, GrB_WaitMode::GrB_COMPLETE as i32);
 
-                let mut lag_g = create_lagraph_graph(
+                let mut lag_g = LAGraph::new(
                     cap_mtx,
                     LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
                     false,
                 )?;
-                let mut msg = new_msg();
-                cache_transpose(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_EMin(lag_g, msg.as_mut_ptr());
 
-                let mut lag_max_flow: f64 = 0.0;
-                let mut flow_mtx: GrB_Matrix = null_mut();
-                let info = lagraphx_bindings::LAGr_MaxFlow(
-                    &raw mut lag_max_flow,
-                    &raw mut flow_mtx,
-                    null_mut(),
-                    lag_g,
-                    src_id as u64,
-                    sink_id as u64,
-                    msg.as_mut_ptr(),
-                );
-
-                delete_lagraph_graph(&mut lag_g);
-
-                if info != 0 || flow_mtx.is_null() {
-                    if !flow_mtx.is_null() {
-                        GrB_Matrix_free(&raw mut flow_mtx);
-                    }
-                    let detail = msg_to_string(&msg);
-                    return Err(format!("LAGr_MaxFlow failed: {info}; {detail}"));
-                }
-
-                let mut nvals: GrB_Index = 0;
-                GrB_Matrix_nvals(&raw mut nvals, flow_mtx);
-                let mut rows = vec![0u64; nvals as usize];
-                let mut cols = vec![0u64; nvals as usize];
-                let mut vals = vec![0.0f64; nvals as usize];
-                let mut nvals_out = nvals;
-                GrB_Matrix_extractTuples_FP64(
-                    rows.as_mut_ptr(),
-                    cols.as_mut_ptr(),
-                    vals.as_mut_ptr(),
-                    &raw mut nvals_out,
-                    flow_mtx,
-                );
-                GrB_Matrix_free(&raw mut flow_mtx);
+                let (lag_max_flow, flow_guard) = lag_g.max_flow(src_id as u64, sink_id as u64)?;
+                let (rows, cols, vals) = flow_guard.extract_tuples_fp64();
+                drop(flow_guard);
 
                 let mut flow_by_edge: FxHashMap<(usize, usize), f64> =
-                    FxHashMap::with_capacity_and_hasher(nvals_out as usize, FxBuildHasher);
-                for i in 0..nvals_out as usize {
+                    FxHashMap::with_capacity_and_hasher(vals.len(), FxBuildHasher);
+                for i in 0..vals.len() {
                     if vals[i] > 0.0 {
                         flow_by_edge.insert((rows[i] as usize, cols[i] as usize), vals[i]);
                     }

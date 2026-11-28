@@ -74,6 +74,7 @@ mod block_scaling_bench;
 mod degree_bench;
 #[cfg(test)]
 mod fold_cost_bench;
+pub mod lagraph;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;
@@ -83,6 +84,8 @@ pub mod serialization;
 pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;
+
+pub use lagraph::{LAGraph, MatrixGuard};
 
 /// The instruction counter the benches in this directory measure with.
 ///
